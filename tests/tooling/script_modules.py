@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 
 
@@ -31,3 +33,27 @@ def load_script(name: str, directory: Path = SCRIPTS) -> ModuleType:
     finally:
         sys.path.remove(str(directory))
     return module
+
+
+def install_stub(
+    bin_dir: Path, name: str, body: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stub command `name` on `PATH`, running `body` with this interpreter.
+
+    On Linux and macOS it is an executable script with this Python on its shebang line;
+    on Windows, which runs no shebang, it is `name.py` with a `name.cmd` beside it that
+    runs it, found through PATHEXT. `PATH` is joined with `os.pathsep`, so the stub is
+    found first on either.
+    """
+    import os
+
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        (bin_dir / f"{name}.py").write_text(body, encoding="utf-8")
+        (bin_dir / f"{name}.cmd").write_text(
+            f'@"{sys.executable}" "%~dp0{name}.py" %*\r\n', encoding="utf-8"
+        )
+    else:
+        (bin_dir / name).write_text(f"#!{sys.executable}\n{body}", encoding="utf-8")
+        (bin_dir / name).chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")

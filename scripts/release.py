@@ -52,6 +52,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -363,8 +364,10 @@ def _git(*args: str) -> str:
 
 
 def _gh(*args: str, stdin: str | None = None) -> str:
+    # `shutil.which` finds `gh` as the shell would, PATHEXT included on Windows, where
+    # a bare "gh" reaches CreateProcess and only a `gh.exe` is ever found.
     completed = subprocess.run(
-        ["gh", *args], capture_output=True, text=True, input=stdin
+        [shutil.which("gh") or "gh", *args], capture_output=True, text=True, input=stdin
     )
     if completed.returncode != 0:
         raise ReleaseError(

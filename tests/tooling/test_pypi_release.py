@@ -18,15 +18,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import sys
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
-from script_modules import load_script
+from script_modules import install_stub, load_script
 
 # `pypi_release` imports its sibling `release`, which must be loaded first.
 load_script("release")
@@ -248,15 +246,7 @@ def test_an_index_error_is_not_read_as_no_files(served: dict[str, tuple[int, byt
 # ── The GitHub Release's copy, through a stub `gh` ──────────────────────────
 
 
-@pytest.fixture
-def release_gh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A `gh` whose one Release's assets live in a directory, and that logs calls."""
-    assets = tmp_path / "release-assets"
-    assets.mkdir()
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    (bin_dir / "gh").write_text(
-        f"""#!{sys.executable}
+STUB_RELEASE_GH = """\
 import json, os, shutil, sys
 from pathlib import Path
 assets = Path(os.environ["FAKE_ASSETS"])
@@ -264,7 +254,7 @@ args = sys.argv[1:]
 with open(os.environ["FAKE_GH_LOG"], "a") as handle:
     handle.write(" ".join(args) + "\\n")
 if args[:2] == ["release", "view"]:
-    print(json.dumps({{"assets": [{{"name": p.name}} for p in sorted(assets.iterdir())]}}))
+    print(json.dumps({"assets": [{"name": p.name} for p in sorted(assets.iterdir())]}))
 elif args[:2] == ["release", "upload"]:
     for path in args[3:args.index("--repo")]:
         if (assets / Path(path).name).exists():
@@ -275,11 +265,15 @@ elif args[:2] == ["release", "download"]:
     shutil.copy(assets / name, args[args.index("--dir") + 1])
 else:
     sys.exit("unexpected gh invocation: " + " ".join(args))
-""",
-        encoding="utf-8",
-    )
-    (bin_dir / "gh").chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+"""
+
+
+@pytest.fixture
+def release_gh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A `gh` whose one Release's assets live in a directory, and that logs calls."""
+    assets = tmp_path / "release-assets"
+    assets.mkdir()
+    install_stub(tmp_path / "bin", "gh", STUB_RELEASE_GH, monkeypatch)
     monkeypatch.setenv("FAKE_ASSETS", str(assets))
     monkeypatch.setenv("FAKE_GH_LOG", str(tmp_path / "gh.log"))
     return assets

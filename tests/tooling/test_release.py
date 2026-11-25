@@ -27,11 +27,10 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
-from script_modules import load_script
+from script_modules import install_stub, load_script
 
 release = load_script("release")
 
@@ -577,6 +576,30 @@ def test_the_notes_are_read_from_the_commit_that_added_the_fragment(
 # ── End to end: the `plan` and `publish` commands ───────────────────────────
 
 
+STUB_GH = """\
+import json, os, sys
+
+state = json.loads(open(os.environ["FAKE_GH_STATE"]).read())
+args = sys.argv[1:]
+with open(os.environ["FAKE_GH_LOG"], "a") as handle:
+    handle.write(" ".join(args) + "\\n")
+if args[:2] == ["release", "list"]:
+    print(json.dumps([{"tagName": tag} for tag in state["releases"]]))
+elif args[:2] == ["release", "create"]:
+    if state["fail_create"]:
+        print("could not create the release", file=sys.stderr)
+        sys.exit(1)
+    print("created")
+elif args[:1] == ["api"]:
+    sha = args[1].split("/commits/")[1].split("/")[0]
+    number = state["prs"].get(sha)
+    print(json.dumps([{"number": number, "merged_at": "2026-10-29"}] if number else []))
+else:
+    print("unexpected gh invocation: " + " ".join(args), file=sys.stderr)
+    sys.exit(2)
+"""
+
+
 @pytest.fixture
 def stub_gh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A `gh` on `PATH` that answers from a JSON file and logs what it was asked.
@@ -590,35 +613,7 @@ def stub_gh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         json.dumps({"releases": ["v0.3.0"], "prs": {}, "fail_create": False})
     )
     log = tmp_path / "gh.log"
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    (bin_dir / "gh").write_text(
-        f"""#!{sys.executable}
-import json, os, sys
-
-state = json.loads(open(os.environ["FAKE_GH_STATE"]).read())
-args = sys.argv[1:]
-with open(os.environ["FAKE_GH_LOG"], "a") as handle:
-    handle.write(" ".join(args) + "\\n")
-if args[:2] == ["release", "list"]:
-    print(json.dumps([{{"tagName": tag}} for tag in state["releases"]]))
-elif args[:2] == ["release", "create"]:
-    if state["fail_create"]:
-        print("could not create the release", file=sys.stderr)
-        sys.exit(1)
-    print("created")
-elif args[:1] == ["api"]:
-    sha = args[1].split("/commits/")[1].split("/")[0]
-    number = state["prs"].get(sha)
-    print(json.dumps([{{"number": number, "merged_at": "2026-10-29"}}] if number else []))
-else:
-    print("unexpected gh invocation: " + " ".join(args), file=sys.stderr)
-    sys.exit(2)
-""",
-        encoding="utf-8",
-    )
-    (bin_dir / "gh").chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    install_stub(tmp_path / "bin", "gh", STUB_GH, monkeypatch)
     monkeypatch.setenv("FAKE_GH_STATE", str(state))
     monkeypatch.setenv("FAKE_GH_LOG", str(log))
     return state
