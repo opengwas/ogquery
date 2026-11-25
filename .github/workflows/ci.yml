@@ -9,8 +9,8 @@ name: CI
 #                      highest Python supported;
 #   floors             the same tests at the lowest numpy, zarr, numcodecs, fsspec and
 #                      aiohttp allowed;
-#   no http extra      the LD read path without fsspec and aiohttp: local LD Stores
-#                      read, and an http(s) open names `ogquery[http]` (ogquery#2);
+#   no http extra      without fsspec and aiohttp: an http(s) open names `ogquery[http]`,
+#                      and local LD Stores answer their golden reads (ogquery#2);
 #   lint               ruff, and mypy --strict on ogquery/ and scripts/;
 #   distributions      the source archive and the wheel, built as a release builds them,
 #                      and a strict-mypy caller of the installed wheel (py.typed);
@@ -81,16 +81,24 @@ jobs:
       - name: The contract bundle
         run: python -m pytest tests/contract -v
 
+      # Its own step, so a boundary failure is named; the steps after leave its tests out, so
+      # each runs once a leg.
       - name: The import boundary
-        run: python -m pytest tests/unit/test_store_reader_imports.py tests/ld/test_ld_imports.py -v
+        run: >-
+          python -m pytest -v tests/unit/test_store_reader_imports.py
+          tests/ld/test_ld_imports.py tests/ld/test_zarr_config.py
 
-      # The LD Test Store against its golden data, locally and served over HTTP from this
+      # The LD Test Stores against their golden data, locally and served over HTTP from this
       # machine (ogquery#2).
       - name: The LD read path
-        run: python -m pytest tests/ld
+        run: >-
+          python -m pytest tests/ld --ignore=tests/ld/test_ld_imports.py
+          --ignore=tests/ld/test_zarr_config.py
 
       - name: The unit and tooling tests
-        run: python -m pytest tests/unit tests/tooling
+        run: >-
+          python -m pytest tests/unit tests/tooling
+          --ignore=tests/unit/test_store_reader_imports.py
 
   # The floors pyproject.toml declares, installed together (.github/floors.txt), so each
   # is one the Store Reader was tested on. Python 3.12 only: numpy 2.0 has no wheel for
@@ -126,10 +134,11 @@ jobs:
       - name: The contract, the import boundary, the LD read path and the unit tests
         run: python -m pytest tests/contract tests/unit tests/ld
 
-  # Without the `http` extra (ogquery#2): fsspec and aiohttp are not installed, local LD
-  # Stores read, and an http(s) open raises HttpExtraMissing naming `ogquery[http]`
-  # (tests/ld/test_http_extra.py). The tests that serve a store over HTTP carry the `http`
-  # mark and are the ones left out; every other test passes without the extra.
+  # Without the `http` extra (ogquery#2): fsspec and aiohttp are not installed, an http(s)
+  # open raises HttpExtraMissing naming `ogquery[http]`, the import boundary and zarr's
+  # configuration hold, and a representative set of local golden reads answers: the queries
+  # against the reference r and plink2, a whole-store read, and the answers pinned by
+  # fingerprint. The whole LD suite runs with the extra, in `tests`.
   no-http:
     name: tests without the http extra
     runs-on: ubuntu-latest
@@ -158,8 +167,12 @@ jobs:
         run: |
           python -c "import importlib.util as u, sys; found = [m for m in ('fsspec', 'aiohttp') if u.find_spec(m)]; print(found); sys.exit(bool(found))"
 
-      - name: The LD read path and the unit tests, less the HTTP ones
-        run: python -m pytest tests/ld tests/unit -m "not http"
+      - name: Dependency isolation, and local golden reads
+        run: >-
+          python -m pytest -m "not http"
+          tests/ld/test_http_extra.py tests/ld/test_ld_imports.py tests/ld/test_zarr_config.py
+          tests/ld/contract/test_query.py tests/ld/contract/test_store.py
+          tests/ld/test_matrix_region_unchanged.py tests/ld/test_public_reads.py
 
   lint:
     name: lint and typecheck
