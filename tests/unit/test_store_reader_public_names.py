@@ -1,4 +1,4 @@
-"""Every public name of opengwasdb's Store Reader at `c8ebe4ca` exists in ogquery (ogquery#4).
+"""Every public name of opengwasdb's Store Reader at `355449d7` exists in ogquery (ogquery#4, #8).
 
 opengwasdb's `opengwasdb/store_reader/` and `opengwasdb/store/query_digests.py` (here
 `ogquery.digests`) are what ogquery is catching up with, and opengwasdb#475 reduces
@@ -9,7 +9,7 @@ a name ogquery drops later fails here, and is dropped from the list on purpose.
 
 Regenerate it with `scripts/public_names.py`, on an unpacked `git archive` of the commit:
 
-    git -C <opengwasdb> archive c8ebe4ca2e7697f3b723fd89ebb645bb1d221fd4 \
+    git -C <opengwasdb> archive 355449d7397f0e50664e48e5bcf0bd3880bda2e2 \
         opengwasdb/store_reader opengwasdb/store/query_digests.py | tar -x -C <dir>
     python scripts/public_names.py <dir>
 """
@@ -20,7 +20,7 @@ import importlib
 
 import pytest
 
-OPENGWASDB_COMMIT = "c8ebe4ca2e7697f3b723fd89ebb645bb1d221fd4"
+OPENGWASDB_COMMIT = "355449d7397f0e50664e48e5bcf0bd3880bda2e2"
 
 PUBLIC_NAMES: dict[str, tuple[str, ...]] = {
     "ogquery": (
@@ -401,7 +401,10 @@ PUBLIC_NAMES: dict[str, tuple[str, ...]] = {
     ),
     "ogquery.rho": (
         "DenseRhoReader",
+        "OVERFLOW_ONLY_ATTR",
+        "OverflowOnlyAnalysisError",
         "packed_rho",
+        "recorded_overflow_only",
     ),
     "ogquery.rsid_index": (
         "MalformedRsidIndex",
@@ -522,6 +525,7 @@ PUBLIC_NAMES: dict[str, tuple[str, ...]] = {
         "REFUSAL_ERRORS",
         "RESOLVED_SHAPES",
         "RESULT_ARRAY_NAMES",
+        "RHO_REFUSALS",
         "SECTIONS",
         "THRESHOLDS",
         "UNKNOWN_ANALYSIS",
@@ -539,6 +543,7 @@ PUBLIC_NAMES: dict[str, tuple[str, ...]] = {
         "questions",
         "range_questions",
         "readable_answer",
+        "readable_arrays",
         "readable_differences",
         "readable_value",
         "refusal_digest",
