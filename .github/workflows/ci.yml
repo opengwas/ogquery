@@ -81,24 +81,19 @@ jobs:
       - name: The contract bundle
         run: python -m pytest tests/contract -v
 
-      # Its own step, so a boundary failure is named; the steps after leave its tests out, so
-      # each runs once a leg.
+      # The tests marked `boundary` (pyproject.toml), in a step of their own so a boundary
+      # failure is named; every step after leaves them out, so each runs once a leg.
       - name: The import boundary
-        run: >-
-          python -m pytest -v tests/unit/test_store_reader_imports.py
-          tests/ld/test_ld_imports.py tests/ld/test_zarr_config.py
+        run: python -m pytest -v -m boundary tests/unit tests/ld
 
       # The LD Test Stores against their golden data, locally and served over HTTP from this
-      # machine (ogquery#2).
-      - name: The LD read path
-        run: >-
-          python -m pytest tests/ld --ignore=tests/ld/test_ld_imports.py
-          --ignore=tests/ld/test_zarr_config.py
+      # machine, and zarr's configuration after LD reads (tests/ld/test_zarr_config.py;
+      # ogquery#2).
+      - name: The LD read path, and zarr's configuration after it
+        run: python -m pytest -m "not boundary" tests/ld
 
       - name: The unit and tooling tests
-        run: >-
-          python -m pytest tests/unit tests/tooling
-          --ignore=tests/unit/test_store_reader_imports.py
+        run: python -m pytest -m "not boundary" tests/unit tests/tooling
 
   # The floors pyproject.toml declares, installed together (.github/floors.txt), so each
   # is one the Store Reader was tested on. Python 3.12 only: numpy 2.0 has no wheel for

@@ -97,6 +97,7 @@ testpaths = ["tests"]
 addopts = ["--strict-markers", "--import-mode=importlib"]
 markers = [
   "http: reads an LD Store over HTTP from a locally served copy; needs the `http` extra",
+  "boundary: the import boundary, what the package loads; CI runs these once, in their own step",
 ]
 # Each test directory imports its own helpers (`contract_reader`, the unit tests'
 # siblings) by name, as opengwasdb's suite does.

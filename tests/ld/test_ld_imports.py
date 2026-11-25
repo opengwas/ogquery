@@ -20,6 +20,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+#: CI runs the import boundary in its own step (`-m boundary`), and every other step leaves it
+#: out (`-m "not boundary"`), so each of these runs once a leg.
+pytestmark = pytest.mark.boundary
+
 TEST_STORE = Path(__file__).resolve().parent / "data" / "test-panel" / "store"
 #: Nothing here, and nothing it imports, may load these.
 FORBIDDEN = (
