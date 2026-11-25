@@ -38,6 +38,7 @@ pixi run -e dev python …           # anything ad hoc
 - [ ] New tests observed to fail against the unfixed code.
 - [ ] The Store Reader's public names unchanged unless the change says so: opengwasdb
       re-exports them.
+- [ ] Merged with a merge commit, never squashed or rebased (CONTRIBUTING.md, Development).
 
 ## Where the authority lives
 

@@ -47,12 +47,13 @@ An association answer is a mapping of numpy arrays (`z`, `se`, `beta`, `pval`,
 `eaf`, `association_status`, `variant_index`, `analysis_index`); `lookup`,
 `analysis` and `range_phewas` are the other shapes (`ogquery.facade`).
 
-**A 0.2.x release** answers its variants from `variants.tsv.gz`, a BGZF/tabix
-file that needs pysam. ogquery refuses to query one alone, with an error
-(`ogquery.release.VariantTableReaderRequired`) naming the release's
-`format_version` and `ogdb rewrite-release`, the opengwasdb command that
-rewrites it as 0.3.0. opengwasdb passes a reader for the table,
-`open_release(path, legacy=...)`, and reads both.
+**A 0.2.x or 0.1.0 release** answers its variants from `variants.tsv.gz`, a
+BGZF/tabix file that needs pysam. ogquery refuses to query one alone, with an
+error (`ogquery.release.VariantTableReaderRequired`) naming the release's
+`format_version` and how to make it a 0.3.0 release: a **0.2.3** release is
+rewritten with `ogdb rewrite-release` (opengwasdb); an earlier one must be
+**rebuilt from source**, since the rewrite accepts 0.2.3 alone. opengwasdb
+passes a reader for the table, `open_release(path, legacy=...)`, and reads both.
 
 ## Develop
 
@@ -68,6 +69,28 @@ Or, without pixi: `pip install -e ".[test]"` and `pytest`.
 [CONTRIBUTING.md](./CONTRIBUTING.md) is how to contribute,
 [AGENTS.md](./AGENTS.md) how work moves, [CONTEXT.md](./CONTEXT.md) the
 vocabulary, and [docs/adr/](./docs/adr/) the decisions.
+
+## Releases
+
+Every pull request merged into `main` is a version: `release.yml` tags it
+from its changelog fragments, and `publish.yml` publishes it to PyPI by
+trusted publishing ([ADR 0001](./docs/adr/0001-ogquery-is-the-store-reader-extracted-from-opengwasdb.md);
+opengwasdb ADR 0083).
+
+**Merge with "Create a merge commit"**, never squash or rebase. A squash loses
+the history this package carries. A rebase puts each of the branch's commits on
+`main`, about 65 for the first merge, which is more than one release run
+publishes (`MAX_PLANNED_RELEASES`), so nothing is tagged. Only a merge commit
+keeps the history and makes the merge one version.
+
+**The first release.** The first merge skips the repository's first commit
+(`a8822a8`, never released) and becomes `v0.1.0`, with a tag and a GitHub
+Release. It then dispatches `publish.yml` with `index=pypi`, which publishes
+straight to PyPI with no TestPyPI rehearsal (the owner's ruling). If the
+trusted publisher is not registered yet, the upload fails at OIDC before
+anything reaches PyPI, and the daily run (06:17 UTC) retries with the same
+archives. The GitHub environments `pypi` and `testpypi`, limited to `main`, are
+the owner's to create; `pypi` must exist before the upload.
 
 ## Where it came from
 

@@ -26,7 +26,8 @@ What a caller passes as `open_release(path, legacy=...)` so ogquery can query a 
 which reads that release's BGZF/tabix Store Variant Table and its `variant_aliases`.
 ogquery defines the protocol and implements none that needs pysam; opengwasdb implements
 it. Without one, querying such a release raises `VariantTableReaderRequired`, naming its
-format version and `ogdb rewrite-release`. A 0.3.0 release needs none.
+format version and how it becomes 0.3.0: `ogdb rewrite-release` for a 0.2.3 release, a
+rebuild from source for an earlier one. A 0.3.0 release needs none.
 _Avoid_: legacy reader, legacy provider.
 
 **Bundle Source**:
