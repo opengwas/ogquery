@@ -12,7 +12,6 @@ release it is a copy of. The 0.2 releases are 0.2-shaped copies of bundle releas
 
 from __future__ import annotations
 
-import shutil
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -104,4 +103,3 @@ def test_the_bundle_release_is_untouched_by_a_copy(tmp_path: Path):
     before = sorted(p.name for p in (BUNDLE / "dense_ranges").iterdir())
     copy_as_0_2(BUNDLE / "dense_ranges", tmp_path)
     assert sorted(p.name for p in (BUNDLE / "dense_ranges").iterdir()) == before
-    shutil.rmtree(tmp_path / "dense_ranges")

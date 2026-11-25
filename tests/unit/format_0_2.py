@@ -28,6 +28,7 @@ is all a fixture of a few hundred rows needs; opengwasdb's reader seeks with tab
 
 from __future__ import annotations
 
+import gc
 import gzip
 import json
 import shutil
@@ -58,10 +59,8 @@ def as_0_2(release: Path, version: str = "0.2.3") -> Path:
     manifest = json.loads((release / "manifest.json").read_text(encoding="utf-8"))
     if manifest["primary_layout"] == "hybrid":
         raise ValueError(f"{release} is a Hybrid, whose 0.2 copy only opengwasdb can write")
-    sidecar = AlidSidecar.open(release)
-    assert sidecar is not None, f"{release} has no ALID sidecar: not a 0.3.0 release"
-    alids = sidecar.alids(np.arange(sidecar.n_rows)).tolist()
-    del sidecar
+    alids = _alids(release)
+    gc.collect()  # no map of a sidecar outlives the read: Windows deletes no mapped file
     for name in (*ALID_SIDECAR_FILENAMES, *POSITION_SIDECAR_FILENAMES):
         (release / name).unlink()
     for name in SOURCE_ALID_SIDECAR_FILENAMES:
@@ -72,6 +71,12 @@ def as_0_2(release: Path, version: str = "0.2.3") -> Path:
     for subset in sorted((release / "data.zarr" / "indexed_subsets").glob("*/zarr.json")):
         _restamp(subset, "source_format_version", version)
     return release
+
+
+def _alids(release: Path) -> list[str]:
+    sidecar = AlidSidecar.open(release)
+    assert sidecar is not None, f"{release} has no ALID sidecar: not a 0.3.0 release"
+    return [str(alid) for alid in sidecar.alids(np.arange(sidecar.n_rows)).tolist()]
 
 
 def copy_as_0_2(release: Path, into: Path, version: str = "0.2.3") -> Path:
