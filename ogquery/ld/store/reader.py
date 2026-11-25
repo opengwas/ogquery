@@ -1,26 +1,24 @@
 """Reading an LD Store: the seam every query is built on (ld-store §1–§6, §10; ogld#4).
 
-`StoreReader` is the store layer's whole read interface. It hides Zarr, the chunk and
-shard shapes, chromosome-local rows and the codes, which it decodes at the scale the store
-records (`ogquery.ld.format.REncoding`; ADR 0090): callers pass and receive global Variant Set
-rows
-and Stored r as float64. Every unstored pair it reports is NaN, never a
-number, and the meaning of a NaN is the format's to say (`ogquery.ld.format.answer_kinds`).
+`StoreReader` is the store layer's whole read interface. It hides Zarr, the chunk and shard shapes,
+chromosome-local rows and the codes, which it decodes at the scale the store records
+(`ogquery.ld.format.REncoding`; ADR 0090): callers pass and receive global Variant Set rows and
+Stored r as float64. Every unstored pair it reports is NaN, never a number, and the meaning of a NaN
+is the format's to say (`ogquery.ld.format.answer_kinds`).
 
 The variant half is `VariantTable`'s (`ogquery/ld/store/variants.py`), which this reader composes
-and
-delegates to: the rows of a list of ALIDs, a region's rows, a chromosome's range, the columns at
+and delegates to: the rows of a list of ALIDs, a region's rows, a chromosome's range, the columns at
 some rows, and the loci a query orders and measures by (opengwas/ogld#94). One class owns ALID
 lookup, so a second reader composes the same one and opengwas/ogld#87's change to `rows_of` lands
 once for both (owner, on epic opengwas/ogld#18, 21 November 2026). What is below is the LD half:
 pairs, matrices, regions and the Partner Rows.
 
 Reads are bounded (ld-store §10). Opening reads the provenance and the chromosome ranges, and
-nothing else. A chromosome's positions and its Near Band's `indptr` are read on first touch,
-and its Far Pairs' `indptr` when a request needs pairs beyond near_bp. Each is kept. Every
-other read goes through `ChunkCache`,
-which fetches only the inner chunks holding the elements a request needs, from disk or over
-HTTP alike, and keeps them, so a query that reads a few pairs at a time fetches each once.
+nothing else. A chromosome's positions and its Near Band's `indptr` are read on first touch, and its
+Far Pairs' `indptr` when a request needs pairs beyond near_bp. Each is kept. Every other read goes
+through `ChunkCache`, which fetches only the inner chunks holding the elements a request needs, from
+disk or over HTTP alike, and keeps them, so a query that reads a few pairs at a time fetches each
+once.
 
 A chunk the store lost reads as its array's fill value, and ld-store §6 chose each fill value
 as one a valid LD Store never holds. So every read refuses that value, naming the array,
@@ -324,9 +322,9 @@ class StoreReader(ComponentWorkers):
     # ------------------------------------------------------- the variant table's reads
     #
     # These are the read interface a query names (owner, 10 November 2026), and their one owner is
-    # `ogquery.ld.store.VariantTable` (#94): the reader answers them through the table it
-    # composes, so a
-    # second reader and this one cannot drift apart on what an ALID, a region or a chromosome means.
+    # `ogquery.ld.store.VariantTable` (#94): the reader answers them through the table it composes,
+    # so a second reader and this one cannot drift apart on what an ALID, a region or a chromosome
+    # means.
 
     def rows_of(self, alids: Sequence[str]) -> npt.NDArray[np.int64]:
         """The Variant Set row of each ALID, in order; −1 where the ALID is Absent (ld-store §2).
@@ -510,10 +508,9 @@ class StoreReader(ComponentWorkers):
     def has_partner_rows(self) -> bool:
         """Whether the store's provenance claims Partner Rows, which is
         `ogquery.ld.format.claims_partner_rows`: the recorded format version is 0.2.0 or later
-        **and**
-        the Partner Threshold is recorded, which is what a derivation writes in its one claim
-        (partner-rows §6.2; ld-store §13). The reader, validation and the derivation ask that one
-        rule, so a store one of them calls claimed is one they all do.
+        **and** the Partner Threshold is recorded, which is what a derivation writes in its one
+        claim (partner-rows §6.2; ld-store §13). The reader, validation and the derivation ask that
+        one rule, so a store one of them calls claimed is one they all do.
 
         A version this package reads (0.1.0 or 0.2.0, refused at open otherwise) that is below
         0.2.0 has none, whatever keys or groups a store carries: they are a residue nothing has
