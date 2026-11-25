@@ -17,9 +17,10 @@ Writing to a release -- staging, publishing, amending its provenance, opening
 its arrays for writing or its `index.sqlite` -- is `opengwasdb.store.open`'s,
 whose `OpenGWASDBStore` is this class with those added (#464). So is the Store
 Variant Table's 0.2.x access (`opengwasdb.variants.legacy_table`): a 0.2 release
-opened with no `legacy` opener has no Variant Axis, and `variant_axis` says so. A 0.3.0
-release needs none: its axis reads the sidecars, and its table refuses every read
-(`NoVariantTable`, #474).
+opened with no `legacy` opener has no Variant Axis, and `variant_axis` refuses it
+(`VariantTableReaderRequired`), naming its `format_version` and the command that
+rewrites it as 0.3.0. A 0.3.0 release needs none: its axis reads the sidecars, and its
+table refuses every read (`NoVariantTable`, #474).
 """
 
 from __future__ import annotations
@@ -45,6 +46,32 @@ from ogquery.variant_axis import (
 
 if TYPE_CHECKING:
     from ogquery.facade import HybridStoreQuery, RaggedStoreQuery, StoreQuery
+
+
+#: The command that rewrites a 0.2.3 release as 0.3.0, which the Store Reader reads alone.
+REWRITE_COMMAND = "ogdb rewrite-release"
+
+
+class VariantTableReaderRequired(ValueError):
+    """A 0.2.x or 0.1.0 release opened without a reader for its Store Variant Table.
+
+    Those formats answer a query's variants from `variants.tsv.gz` (BGZF and tabix), which
+    needs pysam, and from `index.sqlite`; ogquery reads neither. The caller either passes
+    a reader, `open_release(path, legacy=...)`, as opengwasdb's `open_store` does, or
+    rewrites the release as 0.3.0 with `REWRITE_COMMAND`. A `ValueError`, as the refusal
+    was before it had a name.
+    """
+
+    def __init__(self, path: Path, format_version: str) -> None:
+        self.path = path
+        self.format_version = format_version
+        super().__init__(
+            f"{path} is format_version {format_version}, whose queries read its Store "
+            "Variant Table (a BGZF/tabix file), and it was opened without a reader for its "
+            f"Store Variant Table. Rewrite it as 0.3.0 with `{REWRITE_COMMAND}` (opengwasdb), "
+            "which ogquery reads alone, or pass open_release(..., legacy=...), as "
+            "opengwasdb's open_store does"
+        )
 
 
 def release_paths(path: Path) -> dict[str, Path]:
@@ -178,11 +205,7 @@ class StoreRelease(ReleasePaths):
         if self.legacy is not None:
             table: LegacyVariantTable = self.legacy(self.path, aliases=aliases)
         elif carries_variant_offsets(self.manifest.format_version):
-            raise ValueError(
-                f"{self.path} was opened without a reader for its Store Variant Table "
-                "(a 0.2.x BGZF/tabix file); open it with opengwasdb.store.open.open_store, "
-                "or pass open_release(..., legacy=...)"
-            )
+            raise VariantTableReaderRequired(self.path, self.manifest.format_version)
         else:
             # 0.3.0 reads its sidecars, never the table (ADR 0105 §7, §8, #474).
             table = NoVariantTable(self.path)
