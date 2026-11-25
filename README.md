@@ -28,7 +28,7 @@ pip install 'ogquery[http]'    # and Stores served over HTTP(S)
 
 It installs numpy, zarr, numcodecs and their own dependencies, all as wheels.
 The `http` extra adds fsspec and aiohttp, which zarr reads a URL with; without
-it, opening an `http(s)://` Store raises `ogquery.arrays.HttpExtraMissing`,
+it, opening an `http(s)://` Store raises `ogquery.opening.HttpExtraMissing`,
 naming the extra.
 
 ## Open a release

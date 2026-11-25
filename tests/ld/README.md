@@ -30,6 +30,12 @@ r and clump leads (`plink2/`), the simulated GWAS (`gwas/z.tsv`), `manifest.json
 `variants.tsv` and `panel.pvar` (which the loader, `testdata.py`, reads the rows from). The
 genotypes, PC File and dosages stay in opengwasdb, with the tests that read them.
 
+One store is generated, not copied: `store-k0/`, the Test Store at k = 0, which the plink2
+comparisons read. opengwasdb's tests write it in a scratch directory and commit none, so it was
+written once by opengwasdb `c8ebe4ca`'s own `scripts/ld/make_test_store.py`; `SOURCE` records the
+command, the commit and the inputs' blob ids, and pins its bytes as it pins the copies. It holds
+an ALID companion derived on Linux, which the Windows run of the suite reads.
+
 ## What stayed in opengwasdb
 
 Every test of building, writing, deriving or validating a store, of the CLI, of the Genotype
@@ -37,17 +43,21 @@ Store, and of the Pan-UKB import and the benchmarks stays there, as does any tes
 store only build code can make. The read-side tests among them, so a reader of this suite knows
 what it does not hold:
 
-- **plink2 at k = 0** (`contract/test_query.py`): the clump leads, and the proxies outside the
-  step's band. Both read a k = 0 store that `make_test_store.py` writes; the Test Store is k = 10.
-  The plink2 r itself is held to the reference r here (`test_testdata.py`).
-- **The local ALID companion** (`test_alid_mmap_lifetime.py`, `test_variant_table.py`): a
-  companion is derived by `derive_alid_mmap`, and the Test Store holds none.
+- **The ALID companion's lifetime** (`test_alid_mmap_lifetime.py`, `test_alid_mmap.py`): mappings
+  released under concurrent lookups, and derivation's failure modes. A companion's reads are here
+  (`test_variant_table.py`, `test_alid_companion.py`, on the k = 0 store's and a test-written one).
 - **A lookup's memory over a wide index** (`test_alid_index_reads.py`, one test): it writes an
   index with the builder's `layout.put_numbers`.
 - **The Partner Rows decoded whole** (`test_partner_rows.py`): it decodes frames with the build's
   `decode_frame`. The reader's own frame reads are `test_partner_row_reads.py`'s, here.
-- **Stores at other scales** (`test_encoding.py`), **a leftover Proxy Index** and **Far Pairs a
-  build derives** (`test_proxy_index_removed.py`, `test_far_pairs.py`): each writes its store.
+- **Stores at other scales** (`test_encoding.py`) and **Far Pairs a build derives**
+  (`test_far_pairs.py`): each writes its store. The refusal of an encoding this reader does not
+  implement is here, on an edited copy.
+- **The encoding's build side** (`test_format.py`): quantising, the step, the far code floor and
+  t_far, which only a build or validation computes; the Partner Floor (`test_encoding.py`).
+- **Validation and the source scans** (`test_proxy_index_removed.py`): the leftover-index and
+  0.1.0 reads are here; validation's view of them and the scans of opengwasdb's source are not.
+- **A Genotype Store's root read** (`test_reader_kind.py`): an LD Store's is here (`test_open.py`).
 - **The build's variant order** (`test_variant_order.py`, `test_sorted_spelling_store.py`), the
   **sorted identity a build forms** (`contract/test_identity.py`,
   `test_sorted_spelling_conformance.py`) and the **build's geometry** (`test_geometry.py`'s

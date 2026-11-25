@@ -47,7 +47,7 @@ _Avoid_: fixtures (they are not this repository's to change).
 
 **HTTP Extra**:
 `ogquery[http]`: fsspec and aiohttp, which zarr opens an `http(s)://` Store with. Not part of a
-Clean Install; without it such an open raises `ogquery.arrays.HttpExtraMissing`, naming it.
+Clean Install; without it such an open raises `ogquery.opening.HttpExtraMissing`, naming it.
 
 **Clean Install**:
 A fresh virtual environment into which `pip install ogquery` was run with source builds
