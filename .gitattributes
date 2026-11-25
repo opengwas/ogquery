@@ -1,0 +1,4 @@
+# Text is LF in every checkout, Windows included, so a file read as bytes (LICENSE, which
+# the distribution check compares) is the same everywhere. The contract bundle is bytes,
+# with no conversion at all (tests/contract/.gitattributes, which takes precedence there).
+* text=auto eol=lf

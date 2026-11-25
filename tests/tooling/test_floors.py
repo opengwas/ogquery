@@ -1,0 +1,44 @@
+"""`.github/floors.txt` pins each runtime dependency at pyproject.toml's floor.
+
+CI's `floors` job installs those pins and runs the suite, so a floor pyproject.toml
+promises is one the Store Reader was tested on. Here, the two files agree.
+"""
+
+from __future__ import annotations
+
+import re
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _floors_declared() -> dict[str, str]:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    out = {}
+    for spec in project["dependencies"]:
+        match = re.match(r"^([A-Za-z0-9_.-]+)\s*>=\s*([0-9.]+)", spec)
+        assert match, f"{spec!r} declares no floor"
+        out[match[1]] = match[2]
+    return out
+
+
+def _floors_pinned() -> dict[str, str]:
+    out = {}
+    for line in (ROOT / ".github" / "floors.txt").read_text(encoding="utf-8").splitlines():
+        if line.strip() and not line.startswith("#"):
+            name, _, version = line.partition("==")
+            out[name.strip()] = version.strip()
+    return out
+
+
+def _release(version: str) -> tuple[int, ...]:
+    parts = [int(p) for p in version.split(".")]
+    return tuple(parts + [0] * (3 - len(parts)))
+
+
+def test_every_floor_is_pinned_exactly_at_the_declared_floor():
+    declared, pinned = _floors_declared(), _floors_pinned()
+    assert set(pinned) == set(declared) == {"numpy", "zarr", "numcodecs"}
+    for name, floor in declared.items():
+        assert _release(pinned[name]) == _release(floor), (name, floor, pinned[name])

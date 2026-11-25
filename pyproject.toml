@@ -1,0 +1,165 @@
+[build-system]
+# The same backend and VCS versioning as opengwasdb. 1.27 is the first hatchling
+# that writes PEP 639 licence metadata (`License-Expression`, `License-File`).
+requires = ["hatchling>=1.27", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ogquery"
+dynamic = ["version"]
+description = "The read-only query package for OpenGWAS GWAS Stores: the Store Reader"
+readme = "README.md"
+# zarr 3.4, the floor opengwasdb reads with, requires Python 3.12 (zarr 3.2 moved
+# it there), so the package cannot promise 3.11 without loosening zarr below
+# what the Store Reader is tested on. docs/adr/0001 records the choice.
+requires-python = ">=3.12"
+# GPL-3.0-only, the University of Bristol holding the copyright (LICENSE, CLA.md).
+# No `License ::` classifier: PEP 639 forbids one beside a licence expression.
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+authors = [{ name = "OpenGWAS contributors" }]
+# What is advertised is what CI tests: Linux, macOS and Windows, on the lowest and
+# highest Python below.
+classifiers = [
+  "Intended Audience :: Science/Research",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+# numpy, zarr and numcodecs only, at opengwasdb's bounds (its pyproject.toml at
+# 69c29452) raised to what zarr 3.4 allows, so each floor is one pip can install:
+# zarr 3.4 requires numpy 2. Nothing to compile: each ships wheels for every platform
+# above. tests/unit/test_store_reader_imports.py holds the package to these three, and
+# CI's `floors` job runs the suite at the floors (.github/floors.txt).
+dependencies = [
+  "numpy>=2.0,<2.5",
+  "zarr>=3.4,<4",
+  # 0.17 is the first numcodecs that locks Blosc's global context on decompress as
+  # well as compress; the threaded decoding relies on it (opengwasdb#244). zarr 3.4.0
+  # accepts 0.17.0; later zarr 3.4.x exclude it, and pip then takes 0.17.1 or later.
+  "numcodecs>=0.17",
+]
+
+[project.optional-dependencies]
+# What the test suite needs beyond the package. scipy is the reference the
+# Store Reader's own statistics are checked against (tests/unit/test_store_reader_stats.py);
+# the package never imports it, and the import-boundary tests run with it
+# installed, so a stray `import scipy` would be seen rather than fail to import.
+test = ["pytest>=8", "scipy>=1.11"]
+dev = ["ogquery[test]", "ruff>=0.6", "mypy>=1.10"]
+
+[project.urls]
+Homepage = "https://github.com/opengwas/ogquery"
+Repository = "https://github.com/opengwas/ogquery"
+Issues = "https://github.com/opengwas/ogquery/issues"
+Changelog = "https://github.com/opengwas/ogquery/releases"
+
+# The wheel is the package directory: hatchling finds `ogquery/` and takes every
+# file git tracks under it. The source archive is listed, so it carries the
+# package and what a wheel build from it reads, not the contract bundle.
+# scripts/check_distributions.py holds both archives to this.
+[tool.hatch.build.targets.sdist]
+include = ["/ogquery", "/README.md", "/LICENSE"]
+
+# Version from tags, as opengwasdb (its pyproject.toml, issue #333): every merge
+# to `main` is tagged vX.Y.Z by .github/workflows/release.yml. A release checkout
+# reports `0.1.0`; a checkout past the tag `0.1.1.dev4+g1a2b3c4`; one with no git
+# metadata the fallback, `ogquery.version.FALLBACK_VERSION`.
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+fallback_version = "0.0.0+unknown"
+tag_regex = "^v(?P<version>.*)$"
+local_scheme = "node-and-date"
+
+# `tag_regex` restricts what is parsed, not what `git describe` selects, so the
+# match glob is configured too (opengwasdb#333 review).
+[tool.hatch.version.raw-options.scm.git]
+describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--abbrev=40", "--match", "v*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-markers", "--import-mode=importlib"]
+# Each test directory imports its own helpers (`contract_reader`, the unit tests'
+# siblings) by name, as opengwasdb's suite does.
+pythonpath = ["tests/contract", "tests/unit", "tests/tooling", "scripts"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ogquery"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["numcodecs"]
+ignore_missing_imports = true
+
+# As opengwasdb (its pyproject.toml, #244 review finding 4): zarr's own types
+# are not followed yet, so the Store Reader's typing matches what was measured
+# there. Lift the skip with the typing refactor opengwasdb#245 and #247 track.
+[[tool.mypy.overrides]]
+module = ["zarr", "zarr.*"]
+follow_imports = "skip"
+
+# -----------------------------------------------------------------------------
+# Pixi: a development environment from the package alone. ogquery and its three
+# dependencies come from PyPI, as a user's `pip install ogquery` gets them; conda
+# supplies only Python and the tools.
+# -----------------------------------------------------------------------------
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
+
+[tool.pixi.pypi-dependencies]
+ogquery = { path = ".", editable = true }
+
+# From PyPI too, so the test tools resolve against the same numpy the package does.
+[tool.pixi.feature.test.pypi-dependencies]
+pytest = ">=8"
+scipy = ">=1.11"
+
+[tool.pixi.feature.dev.dependencies]
+ruff = ">=0.6"
+mypy = ">=1.10"
+python-build = ">=1.2"
+twine = ">=5"
+
+# The lowest and highest Python the package supports, as CI's matrix.
+[tool.pixi.feature.py312.dependencies]
+python = "3.12.*"
+
+[tool.pixi.feature.py314.dependencies]
+python = "3.14.*"
+
+[tool.pixi.environments]
+default = { features = ["py312"], solve-group = "default" }
+test = { features = ["py312", "test"], solve-group = "default" }
+dev = { features = ["py312", "test", "dev"], solve-group = "default" }
+test-py314 = { features = ["py314", "test"] }
+
+[tool.pixi.feature.test.tasks]
+# Hermetic: no user site-packages, one BLAS thread, as opengwasdb's `test`.
+test = "PYTHONNOUSERSITE=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 pytest"
+contract = "PYTHONNOUSERSITE=1 pytest tests/contract"
+
+[tool.pixi.feature.dev.tasks]
+lint = "ruff check ."
+typecheck = "mypy ogquery scripts"
+# The committed bundle is opengwasdb's, read only here: this compares it with the
+# bundle at the opengwasdb commit tests/contract/SOURCE names (tests/contract/README.md).
+contract-check = "python scripts/contract_bundle.py check"
