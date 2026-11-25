@@ -17,12 +17,14 @@ A Store Release stores z and SE; its beta is ``z * se`` and its two-sided p is
 
 They replace scipy's ``norm.logsf`` and ``erfcinv``. Against a 50-digit
 reference on 809 points across -40 <= z <= 40, `log10_p_two_sided`'s largest
-relative error is 3.9e-16 (|z| = 36.35). It agrees with the scipy form to 1e-12
-wherever that form is itself that accurate: for |z| below about 1e-3 scipy's p
-is ``0.5 - tiny`` rounded, and its log10 is off by up to 1.3e-4 relative at
-|z| = 1e-12, where this one is not. `z_critical` agrees with scipy's to a
+relative error is 3.9e-16 (|z| = 36.35) on glibc and 4.8e-16 on macOS's libm; the
+libm's `erf`/`erfc` and `log` set its last bits, and the test holds it to five ulps
+(`LIBM_BOUND`). It agrees with the scipy form to 1e-12 wherever that form is
+itself that accurate: for |z| below about 1e-3 scipy's p is ``0.5 - tiny``
+rounded, and its log10 is off by up to 1.3e-4 relative at |z| = 1e-12, where
+this one is not. `z_critical` agrees with scipy's to a
 few ulps, with no float32 |z| between the two at any Top-Hit Index threshold
-(`tests/test_store_reader_stats.py`).
+(`tests/unit/test_store_reader_stats.py`).
 """
 
 from __future__ import annotations

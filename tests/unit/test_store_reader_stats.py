@@ -79,15 +79,45 @@ GRID = np.concatenate(
 )
 
 
-def test_log10_p_is_within_4e_16_of_the_exact_value_across_minus_40_to_40():
-    assert len(GRID) >= 200 and GRID.min() == -39.95 and GRID.max() == 40.0
+#: How far `log10_p_two_sided` may be from the exact value, relative: five float64 ulps.
+#:
+#: It is ``log(erfc(y)) / ln 10`` (``log1p(-erf(y))`` for y < 0.5), so it is as close
+#: as the platform's libm lets it be. C libraries promise `erf`/`erfc` to a few ulps, not
+#: correctly rounded, and differ: glibc, macOS's libm and the Windows CRT each give
+#: another last bit. opengwasdb's cross-machine analysis of this composition (its
+#: pval-ulp round, mpmath over the contract's |z|) found a 4-ulp `erfc` gives up to
+#: 3.8 eps in `log10_p`, and 4.7 eps with `log` also 1 ulp off; the final division by
+#: ln 10 adds at most half an ulp. Five eps covers that, and is the contract's own
+#: 4-ulp comparison of `log10_p` across machines plus that rounding
+#: (`digests.CROSS_MACHINE_RTOL`). Measured: 3.9e-16 (1.8 eps) on glibc, 4.3e-16 on
+#: Windows, 4.8e-16 (2.1 eps, z = -0.95) on macOS. A formula error is far larger:
+#: `test_the_bound_catches_a_formula_error` shows a 1e-12 shift fails it.
+LIBM_BOUND = 5 * float(np.finfo(np.float64).eps)
+
+
+def _largest_relative_error() -> tuple[float, float]:
     exact = np.array([exact_log10_p(float(z)) for z in GRID])
     ours = log10_p_two_sided(GRID)
     zero = exact == 0.0
     assert np.all(ours[zero] == 0.0)
     relative = np.abs(ours[~zero] - exact[~zero]) / np.abs(exact[~zero])
-    # The measured maximum is 3.9e-16, at |z| = 36.35 (stated in `stats.py`).
-    assert relative.max() < 4e-16, (relative.max(), GRID[~zero][relative.argmax()])
+    return float(relative.max()), float(GRID[~zero][relative.argmax()])
+
+
+def test_log10_p_is_within_five_ulps_of_the_exact_value_across_minus_40_to_40():
+    assert len(GRID) >= 200 and GRID.min() == -39.95 and GRID.max() == 40.0
+    worst, at = _largest_relative_error()
+    assert worst < LIBM_BOUND, (worst, worst / LIBM_BOUND * 5, "eps at z =", at)
+
+
+def test_the_bound_catches_a_formula_error(monkeypatch: pytest.MonkeyPatch):
+    """The bound is a libm's last bits, not a formula's: shifting every result by 1e-12
+    relative -- ln 10 taken a little wrong -- fails it some 900 times over."""
+    import ogquery.stats
+
+    monkeypatch.setattr(ogquery.stats, "_LN10", ogquery.stats._LN10 * (1 + 1e-12))
+    worst, _ = _largest_relative_error()
+    assert worst > 100 * LIBM_BOUND, worst
 
 
 #: Below this |z| scipy's own form loses digits: its p is ``0.5 - tiny`` doubled,
