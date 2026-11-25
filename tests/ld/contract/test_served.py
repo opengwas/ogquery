@@ -45,3 +45,13 @@ def test_every_query_over_http_is_the_local_answer(served_store: str) -> None:
                 np.testing.assert_array_equal(value[column], there[name][column], err_msg=name)
         else:
             np.testing.assert_array_equal(value, there[name], err_msg=name)
+
+
+def test_a_scheme_in_capitals_opens_the_served_store(served_store: str) -> None:
+    # A URL's scheme is case-insensitive (RFC 3986 §3.1); fsspec knows `http`, not `HTTP`.
+    assert served_store.startswith("http://")
+    shouting = "HTTP" + served_store[len("http") :]
+    remote, local = ogquery.ld.open(shouting), ogquery.ld.open(support.TEST_STORE)
+    some = alids(passing_rows()[:30])
+    np.testing.assert_array_equal(remote.matrix(some).r, local.matrix(some).r)
+    assert remote._reader.location == shouting, "a refusal names the location as it was given"

@@ -17,8 +17,8 @@ from ogquery.ld.query.results import Proxies
 def proxies(reader: Reader, alids: Sequence[str], *, r2: float, kb: float) -> Proxies:
     """Every partner of each present ALID within kb × 1,000 bp with r̂² ≥ r2 (ogld#6).
 
-    Judged by `opengwasdb.ld.query.requests.window_of` first, which asks
-    `opengwasdb.ld.format.judge_partner_request`: it refuses a store that holds no Partner Rows and
+    Judged by `ogquery.ld.query.requests.window_of` first, which asks
+    `ogquery.ld.format.judge_partner_request`: it refuses a store that holds no Partner Rows and
     a
     threshold below the store's own t_partner within `near_bp`, naming the store and both numbers,
     before any frame is read. Each present ALID's

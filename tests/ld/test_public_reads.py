@@ -8,11 +8,13 @@ Test Panel's: its passing rows, their positions, and their ALIDs as the tests sp
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import support
 from spelling import sorted_identity
-from store_copies import store_reads
+from store_copies import copy_store, store_reads
 from support import alids, panel_data, passing_rows
 
 import ogquery.ld
@@ -101,14 +103,47 @@ def test_a_range_that_is_not_one_is_an_input_error(
         store.count_in(chrom, start, stop)  # type: ignore[arg-type]
 
 
-def test_variants_in_reads_no_r() -> None:
-    # It is what ogdb-api asks before a region's r is read (ogld#79): no chunk of any r array.
-    store = ogquery.ld.open(support.TEST_STORE)
-    with store_reads() as keys:
-        assert store.count_in("22", 1, 3_000_000_000) > 0
-        assert len(store.variants_in("21", 1, 3_000_000_000)) > 0
-    assert [k for k in keys if "/r/c" in k or k.startswith("partners/")] == []
-    assert any(k.startswith("variants/position") for k in keys), "the positions are read"
+#: The LD components a store holds beside its variant table (ld-store §1; partner-rows §5): the
+#: Near Band, the Far Pairs, the Partner Rows, and a 0.1.0 store's Proxy Index.
+COMPONENTS = ("near/", "far/", "partners/", "index/")
+
+
+def test_the_variant_reads_open_no_ld_component() -> None:
+    # They are what ogdb-api asks before a region's r is read (ogld#79): the variant table alone,
+    # not one key of a component, its metadata included. Each read is a cold store's first.
+    reads = {
+        "count_in": lambda store: store.count_in("22", 1, 3_000_000_000),
+        "variants_in": lambda store: len(store.variants_in("21", 1, 3_000_000_000)),
+        "has": lambda store: int(store.has(alids(passing_rows()[:50])).sum()),
+    }
+    for name, read in reads.items():
+        store = ogquery.ld.open(support.TEST_STORE)
+        with store_reads() as keys:
+            assert read(store) > 0, name
+        assert [k for k in keys if k.startswith(COMPONENTS)] == [], name
+        assert any(k.startswith("variants/") for k in keys), f"{name} reads the variant table"
+
+
+def test_the_variant_reads_answer_with_the_near_band_s_metadata_gone(tmp_path: Path) -> None:
+    copy = copy_store(tmp_path / "store")
+    gone = sorted((copy / "near").rglob("zarr.json"))
+    assert len(gone) >= 6, "both chromosomes' Near Band groups and arrays"
+    for path in gone:
+        path.unlink()
+    whole, broken = ogquery.ld.open(support.TEST_STORE), ogquery.ld.open(copy)
+    for chrom in ("21", "22"):
+        assert broken.variants_in(chrom, 1, 3_000_000_000).columns().keys() == {
+            "chrom", "position", "alid", "a1", "a2", "a1_frequency"
+        }
+        for column, value in broken.variants_in(chrom, 1, 3_000_000_000).columns().items():
+            np.testing.assert_array_equal(
+                value, whole.variants_in(chrom, 1, 3_000_000_000).columns()[column]
+            )
+        assert broken.count_in(chrom, 1, 3_000_000_000) == whole.count_in(chrom, 1, 3_000_000_000)
+    asked = alids(np.arange(0, 1061, 5))
+    assert broken.has(asked).tolist() == whole.has(asked).tolist()
+    with pytest.raises(ValueError, match="near"):
+        broken.region("22", 30_000_000, 1_000_000)  # the LD read still refuses, loudly
 
 
 def test_has_is_true_exactly_for_the_variant_set() -> None:

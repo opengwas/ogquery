@@ -136,7 +136,7 @@ class InputError(ValueError):
     """An input ogld cannot use, named: a missing call, a PC File without a kept sample, a
     BuildInputs that contradicts itself (`docs/spec/build-inputs.md`).
 
-    Distinct from a fault inside ogld, such as `REncoding.quantise` refusing r = 1.3: the CLI
+    Distinct from a fault inside ogld, such as a build quantising r = 1.3 and refusing it: the CLI
     exits 2 for an InputError or a Refusal, and lets any other exception propagate.
     """
 

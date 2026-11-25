@@ -192,9 +192,7 @@ def local_root(store_path: StorePath) -> Path:
     A reader's store is wrapped by the cache (`location._KeptIndexes`), so the wrapper is seen
     through: the file is the same one, and a local frame is read from it with `os.pread` (§7).
     """
-    store = store_path.store
-    while isinstance(store, WrapperStore):
-        store = store._store
+    store = _unwrapped(store_path.store)
     if not isinstance(store, LocalStore):
         raise ValueError(
             f"the Partner Rows are written to a local directory, and {type(store).__name__} is "
@@ -244,10 +242,17 @@ ALID_MMAP_PAYLOADS: Final = (
 
 def local_path(root: zarr.Group) -> Path | None:
     """The local hierarchy behind wrappers, or None for HTTP (ADR 0098)."""
-    store = root.store
+    store = _unwrapped(root.store)
+    return Path(store.root) / root.path if isinstance(store, LocalStore) else None
+
+
+def _unwrapped(store: Any) -> Any:
+    """The store behind any wrappers, such as the reader's `location._KeptIndexes`: the one place
+    a store is seen through. `local_root` refuses one that is not local; `local_path` answers
+    None for it (ogquery#2)."""
     while isinstance(store, WrapperStore):
         store = store._store
-    return Path(store.root) / root.path if isinstance(store, LocalStore) else None
+    return store
 
 
 def json_bytes(document: object) -> bytes:
@@ -261,7 +266,11 @@ def file_sha256(path: Path) -> str:
 
 
 def alid_mmap_sources(path: Path) -> dict[str, str]:
-    """Pin canonical content, not just metadata: a foreign companion must refuse (ADR 0098)."""
+    """Pin canonical content, not just metadata: a foreign companion must refuse (ADR 0098).
+
+    Each pin is keyed by its file's path relative to the Store, spelt as a POSIX path, as a
+    manifest derived on Linux spells it: compared as the platform's own string, every pin of a
+    valid companion differed on Windows (ogquery#2)."""
     root = json.loads((path / "zarr.json").read_bytes())
     root["attributes"].pop(ALID_MMAP_ATTR, None)
     sources = {"zarr.json": hashlib.sha256(json_bytes(root)).hexdigest()}
@@ -271,10 +280,10 @@ def alid_mmap_sources(path: Path) -> dict[str, str]:
         metadata = path / payload.source / "zarr.json"
         if not metadata.is_file():
             raise ValueError(f"{metadata}: canonical metadata is missing or not a regular file")
-        sources[str(metadata.relative_to(path))] = file_sha256(metadata)
+        sources[metadata.relative_to(path).as_posix()] = file_sha256(metadata)
         for source in _alid_index_files(path / payload.source):
             if source != metadata:
-                sources[str(source.relative_to(path))] = file_sha256(source)
+                sources[source.relative_to(path).as_posix()] = file_sha256(source)
     return sources
 
 

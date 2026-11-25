@@ -163,9 +163,8 @@ class PreadSource:
         except OSError as failed:
             raise ValueError(f"{self._path} cannot be opened: {failed}") from failed
         self._descriptor = descriptor
-        # A reader dropped without being closed still releases its descriptor: `opengwasdb.ld.open`
-        # has no
-        # close of its own, so a caller that opens a store per request would otherwise leak one.
+        # A reader dropped without being closed still releases its descriptor: a caller that opens
+        # a store per request and never closes it would otherwise leak one.
         self._finalizer = weakref.finalize(self, _closed, descriptor)
         return descriptor
 

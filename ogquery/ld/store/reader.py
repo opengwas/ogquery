@@ -2,12 +2,12 @@
 
 `StoreReader` is the store layer's whole read interface. It hides Zarr, the chunk and
 shard shapes, chromosome-local rows and the codes, which it decodes at the scale the store
-records (`opengwasdb.ld.format.REncoding`; ADR 0090): callers pass and receive global Variant Set
+records (`ogquery.ld.format.REncoding`; ADR 0090): callers pass and receive global Variant Set
 rows
 and Stored r as float64. Every unstored pair it reports is NaN, never a
-number, and the meaning of a NaN is the format's to say (`opengwasdb.ld.format.answer_kinds`).
+number, and the meaning of a NaN is the format's to say (`ogquery.ld.format.answer_kinds`).
 
-The variant half is `VariantTable`'s (`opengwasdb/ld/store/variants.py`), which this reader composes
+The variant half is `VariantTable`'s (`ogquery/ld/store/variants.py`), which this reader composes
 and
 delegates to: the rows of a list of ALIDs, a region's rows, a chromosome's range, the columns at
 some rows, and the loci a query orders and measures by (opengwas/ogld#94). One class owns ALID
@@ -324,7 +324,7 @@ class StoreReader(ComponentWorkers):
     # ------------------------------------------------------- the variant table's reads
     #
     # These are the read interface a query names (owner, 10 November 2026), and their one owner is
-    # `opengwasdb.ld.store.VariantTable` (#94): the reader answers them through the table it
+    # `ogquery.ld.store.VariantTable` (#94): the reader answers them through the table it
     # composes, so a
     # second reader and this one cannot drift apart on what an ALID, a region or a chromosome means.
 
@@ -340,13 +340,13 @@ class StoreReader(ComponentWorkers):
     def rows_in(self, chrom: str, start: int, stop: int) -> npt.NDArray[np.int64]:
         """The rows on `chrom` with start ≤ position ≤ stop, ascending (ld-store §2).
 
-        The rows are the variant table's answer; the chromosome is opened here first, as this has
-        always been the reader's first touch of a chromosome that `region` will read from its Near
-        Band, so each of its arrays' fill values is judged before any element is decoded (ld-store
-        §6). `loci_of` is the variant read that must open none of them (opengwas/ogld#71).
+        The variant table's answer, and nothing of the LD components: `variants_in`, `count_in`
+        and `has` read it before any r, so a store's Near Band, Far Pairs and Partner Rows are
+        never opened for it (ogld#79; ogquery#2). `region` opens its chromosome's Near Band when
+        it reads the region's r (`region_r`), and judges each array's fill value there, before
+        any code is decoded (ld-store §6), as `loci_of` leaves them to the reads that need them
+        (opengwas/ogld#71).
         """
-        if chrom in self._ranges:
-            self._chromosome(chrom)
         return self._variant_table.rows_in(chrom, start, stop)
 
     def chromosome_range(self, chrom: str) -> tuple[int, int]:
@@ -499,7 +499,7 @@ class StoreReader(ComponentWorkers):
     @property
     def has_partner_rows(self) -> bool:
         """Whether the store's provenance claims Partner Rows, which is
-        `opengwasdb.ld.format.claims_partner_rows`: the recorded format version is 0.2.0 or later
+        `ogquery.ld.format.claims_partner_rows`: the recorded format version is 0.2.0 or later
         **and**
         the Partner Threshold is recorded, which is what a derivation writes in its one claim
         (partner-rows §6.2; ld-store §13). The reader, validation and the derivation ask that one
@@ -768,7 +768,7 @@ def _opened_store(location: str | os.PathLike[str], cache_bytes: int | None) -> 
 def opened_ld(root: zarr.Group, location: str, cache: ChunkCache) -> OpenedStore:
     """`OpenedStore` for an already opened root, checked as an LD Store (ld-store §1, §7, §13).
 
-    The kind dispatcher (`opengwasdb.ld.query.kind`) opens a root once and hands it here or to the
+    The kind dispatcher (`ogquery.ld.query.kind`) opens a root once and hands it here or to the
     Genotype Store reader, so one open is one metadata read whichever kind it holds
     (opengwas/ogld#91).
     """
@@ -783,6 +783,6 @@ def opened_ld(root: zarr.Group, location: str, cache: ChunkCache) -> OpenedStore
     if recorded.get("format_version") not in READABLE_FORMATS:
         raise InputError(
             f"{location} is LD Store format {recorded.get('format_version')!r}; "
-            f"this opengwasdb.ld reads {' and '.join(READABLE_FORMATS)} only (ld-store §13)"
+            f"this ogquery.ld reads {' and '.join(READABLE_FORMATS)} only (ld-store §13)"
         )
     return OpenedStore(root, location, cast(Provenance, recorded), cache)

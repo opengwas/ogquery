@@ -194,7 +194,10 @@ def open_group(path: str | os.PathLike[str]) -> Any:
     scheme = _scheme(location)
     if scheme in HTTP_SCHEMES:
         require_http(location)
-        return zarr.open_group(location, mode="r")
+        # A scheme is case-insensitive (RFC 3986 §3.1), and fsspec knows `http`, not `HTTP`:
+        # the URL reaches zarr with its scheme lower-cased and the rest as given.
+        url = scheme + location[len(scheme) :]
+        return zarr.open_group(url, mode="r")
     if scheme is not None:
         raise ValueError(
             f"{location}: a Store is opened from a local path or an http(s) URL, not a "

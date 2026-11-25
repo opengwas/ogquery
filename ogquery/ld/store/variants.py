@@ -9,7 +9,7 @@ has one owner (owner, on epic opengwas/ogld#18, 21 November 2026; ogld#94). `row
 `chromosome_range`, `alids_of`, `loci_of` and `variants` are that owner's reads.
 
 A table opens no store: its reader opens the group, refuses what it cannot read (ld-store §13) and
-hands the table the `opengwasdb.ld.store.location.OpenedStore` both halves hold — the group, the
+hands the table the `ogquery.ld.store.location.OpenedStore` both halves hold — the group, the
 location
 that names the store in a refusal, the recorded provenance and the one chunk cache every read goes
 through. So one store is opened once however many halves read it, a replaced cache is replaced for

@@ -11,9 +11,9 @@ from typing import Any
 
 import numpy as np
 import pytest
+from store_copies import t_far
 
 import ogquery.ld
-from ogquery.ld.format import t_far
 from ogquery.ld.store import StoreReader
 
 EUR_K10 = t_far(771, 10)

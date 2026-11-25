@@ -30,9 +30,9 @@ def clump(
     """Clump the present `alids` by `score`, strongest first (ogld#6).
 
     `score` is |z| or −log10 p, one per ALID, finite and ≥ 0; never raw p, which
-    underflows to 0 past |z| ≈ 38. Judged by `opengwasdb.ld.query.requests.window_of` first, which
+    underflows to 0 past |z| ≈ 38. Judged by `ogquery.ld.query.requests.window_of` first, which
     asks
-    `opengwasdb.ld.format.judge_partner_request`: it refuses a store that holds no Partner Rows and
+    `ogquery.ld.format.judge_partner_request`: it refuses a store that holds no Partner Rows and
     a
     threshold below the store's own t_partner within `near_bp`, naming the store and both numbers,
     before any frame is read. Each lead's joiners are its Partner Rows row among the hits still

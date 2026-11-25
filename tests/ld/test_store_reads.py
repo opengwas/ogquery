@@ -525,8 +525,11 @@ def test_an_r_array_whose_lost_chunk_would_read_as_a_number_is_refused(tmp_path:
     copy = copy_store(tmp_path / "store")
     meta = copy / "near" / "22" / "r" / "zarr.json"
     meta.write_text(meta.read_text().replace('"fill_value": -32768', '"fill_value": 0'))
+    # A region whose r is read: one with no variant reads none, and answers 0 × 0 (ogquery#2).
+    assert ogquery.ld.open(copy).count_in("22", 29_000_000, 31_000_000) > 1
     with pytest.raises(ValueError, match=r"near/22/r has the fill value 0, which valid data"):
-        ogquery.ld.open(copy).region("22", 30_000_000, 100_000)
+        ogquery.ld.open(copy).region("22", 30_000_000, 1_000_000)
+    assert ogquery.ld.open(copy).region("22", 30_000_000, 100_000).r.shape == (0, 0)
     chr21 = StoreReader.open(copy).variants(np.array([100])).position[0]
     assert ogquery.ld.open(copy).region("21", int(chr21), 1_000_000).r.size > 1, (
         "chr21 is intact"

@@ -22,11 +22,19 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 from fingerprint import answer_fingerprint
-from store_copies import PARTNER_FLOOR, R_SCALE, T_PARTNER, TEST_STORE, copy_store, store_reads
+from store_copies import (
+    PARTNER_FLOOR,
+    R_SCALE,
+    T_PARTNER,
+    TEST_STORE,
+    copy_store,
+    store_reads,
+    t_far,
+)
 
 import ogquery.ld
 from ogquery.alid import sorted_alid_locus
-from ogquery.ld.format import InputError, Refusal, RefusalReason, t_far
+from ogquery.ld.format import InputError, Refusal, RefusalReason
 from ogquery.ld.query import clumping
 from ogquery.ld.store import StoreReader
 from ogquery.ld.store.workers import COMPONENT_WORKERS_MAX

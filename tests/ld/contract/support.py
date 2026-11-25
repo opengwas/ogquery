@@ -41,8 +41,7 @@ from store_copies import R_SCALE as R_SCALE
 from store_copies import T_PARTNER as T_PARTNER
 from store_copies import codes_at as codes_at
 from store_copies import stored_at as stored_at
-
-from ogquery.ld.format import t_far
+from store_copies import t_far
 
 TESTS = Path(__file__).resolve().parents[1]
 TEST_PANEL = TESTS / "data" / "test-panel"
