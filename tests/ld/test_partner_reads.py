@@ -9,7 +9,6 @@ from an independent greedy over the Test Panel's reference r.
 
 from __future__ import annotations
 
-import os
 import tracemalloc
 from collections import Counter
 from typing import Any
@@ -245,13 +244,13 @@ def test_proxies_read_the_partner_rows_and_nothing_of_near_or_index(
     ld-store §10). The frames are the one chunk file it reads."""
     names = ogquery.ld.open(TEST_STORE)._reader.alids_of(np.array([500, 520])).tolist()
     preads: list[int] = []
-    original = os.pread
+    original = location._read_at
 
     def recording_pread(fd: int, length: int, offset: int) -> bytes:
         preads.append(length)
         return original(fd, length, offset)
 
-    monkeypatch.setattr(os, "pread", recording_pread)
+    monkeypatch.setattr(location, "_read_at", recording_pread)
     store = ogquery.ld.open(TEST_STORE)
     with store_reads() as keys:
         assert (store._reader.rows_of(names) >= 0).all()

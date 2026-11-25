@@ -157,7 +157,9 @@ class PreadSource:
     def _opened(self) -> int:
         """The descriptor, opened once; the caller holds the state's lock."""
         try:
-            descriptor = os.open(self._path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+            # O_BINARY: Windows opens a descriptor in text mode otherwise, and a frame is bytes.
+            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0)
+            descriptor = os.open(self._path, flags)
         except OSError as failed:
             raise ValueError(f"{self._path} cannot be opened: {failed}") from failed
         self._descriptor = descriptor
@@ -170,7 +172,7 @@ class PreadSource:
     def _pread(self, descriptor: int, start: int, stop: int) -> bytes:
         """One positional read on `descriptor`, which no close can reach while it is counted."""
         try:
-            return os.pread(descriptor, stop - start, start)
+            return _read_at(descriptor, stop - start, start)
         except OSError as failed:
             raise ValueError(
                 f"{self._path}'s bytes [{start}, {stop}) could not be read: {failed}"
@@ -185,6 +187,40 @@ class PreadSource:
             finalizer, self._finalizer = self._finalizer, None
         if finalizer is not None:
             finalizer()
+
+
+def _read_at(descriptor: int, length: int, offset: int) -> bytes:
+    """`length` bytes of `descriptor` from `offset`, fewer where the file ends first: `os.pread`,
+    which positions each read itself, so reads on threads never move each other's offset.
+
+    Windows has no `os.pread` (ogquery#2), so there a read is a seek and a read under one lock,
+    which serialises local frame reads in the process but gives the same bytes; a read is repeated
+    until it has `length` bytes or meets the file's end, as one `pread` of a regular file does.
+    """
+    pread = getattr(os, "pread", None)
+    if pread is not None:
+        data: bytes = pread(descriptor, length, offset)
+        return data
+    return _seek_and_read(descriptor, length, offset)
+
+
+#: The one lock `_seek_and_read` holds, since a seek moves a descriptor's shared offset.
+_SEEK_LOCK: Final = threading.Lock()
+
+
+def _seek_and_read(descriptor: int, length: int, offset: int) -> bytes:
+    """`_read_at` where there is no `os.pread`: a seek and reads, under `_SEEK_LOCK`."""
+    pieces: list[bytes] = []
+    wanted = length
+    with _SEEK_LOCK:
+        os.lseek(descriptor, offset, os.SEEK_SET)
+        while wanted > 0:
+            piece = os.read(descriptor, wanted)
+            if not piece:
+                break
+            pieces.append(piece)
+            wanted -= len(piece)
+    return b"".join(pieces)
 
 
 def _closed(descriptor: int) -> None:

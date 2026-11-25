@@ -180,8 +180,9 @@ def test_store(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Serve
 
 @dataclass
 class Reads:
-    """The chunk-file reads one reader made, however they were served (§7): `os.pread` calls on a
-    local store's kept descriptor, and byte ranges asked of the store on a remote one."""
+    """The chunk-file reads one reader made, however they were served (§7): positional reads
+    (`location._read_at`, `os.pread` where there is one) on a local store's kept descriptor, and
+    byte ranges asked of the store on a remote one."""
 
     preads: list[tuple[int, int]] = field(default_factory=list)
     ranges: list[tuple[str, int, int]] = field(default_factory=list)
@@ -194,13 +195,13 @@ class Reads:
 @contextlib.contextmanager
 def counted_reads(reader: StoreReader, monkeypatch: pytest.MonkeyPatch) -> Iterator[Reads]:
     """Count a reader's chunk-file reads on both transport paths, so a count is a count either way:
-    `os.pread(length, offset)` for a local store, a `RangeByteRequest(key, start, stop)` for one
+    `_read_at(length, offset)` for a local store, a `RangeByteRequest(key, start, stop)` for one
     that is not. Opening a chromosome's group, its `frames_idx` chunk and any whole-chunk read are
     none of them: only a frame's bytes are."""
     held = reader._root.store  # the store every array of the reader shares
     reads = Reads()
     original_get = held.get
-    original_pread = os.pread
+    original_pread = location._read_at
 
     async def get(key: str, prototype: Any, byte_range: Any = None) -> Any:
         if isinstance(byte_range, RangeByteRequest):
@@ -212,7 +213,7 @@ def counted_reads(reader: StoreReader, monkeypatch: pytest.MonkeyPatch) -> Itera
         return original_pread(fd, length, offset)
 
     monkeypatch.setattr(held, "get", get)
-    monkeypatch.setattr(os, "pread", pread)
+    monkeypatch.setattr(location, "_read_at", pread)
     yield reads
 
 
@@ -445,14 +446,14 @@ def test_a_close_waits_for_a_read_in_flight_and_gives_its_own_file_s_bytes(
     other.write_bytes(b"B" * 4_096)
     source = location.PreadSource(held)
     entered, resume = threading.Event(), threading.Event()
-    original = os.pread
+    original = location._read_at
 
     def paused(fd: int, length: int, offset: int) -> bytes:
         entered.set()
         assert resume.wait(5), "the test never resumed the read"
         return original(fd, length, offset)
 
-    monkeypatch.setattr(os, "pread", paused)
+    monkeypatch.setattr(location, "_read_at", paused)
     read: dict[str, bytes] = {}
 
     def reader() -> None:
