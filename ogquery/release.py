@@ -18,8 +18,9 @@ its arrays for writing or its `index.sqlite` -- is `opengwasdb.store.open`'s,
 whose `OpenGWASDBStore` is this class with those added (#464). So is the Store
 Variant Table's 0.2.x access (`opengwasdb.variants.legacy_table`): a 0.2 release
 opened with no `legacy` opener has no Variant Axis, and `variant_axis` refuses it
-(`VariantTableReaderRequired`), naming its `format_version` and the command that
-rewrites it as 0.3.0. A 0.3.0 release needs none: its axis reads the sidecars, and its
+(`VariantTableReaderRequired`), naming its `format_version` and how to make it a 0.3.0
+one: `ogdb rewrite-release` for a 0.2.3 release, a rebuild from source for any earlier
+one. A 0.3.0 release needs none: its axis reads the sidecars, and its
 table refuses every read (`NoVariantTable`, #474).
 """
 
@@ -33,7 +34,7 @@ import numpy as np
 
 from ogquery.arrays import open_group
 from ogquery.enums import PrimaryStorageLayout
-from ogquery.format import carries_variant_offsets, check_format_version
+from ogquery.format import LAST_0_2_FORMAT_VERSION, carries_variant_offsets, check_format_version
 from ogquery.hybrid import DENSE_TO_SHARED_FILENAME, shared_axis_root
 from ogquery.manifest import StoreManifest
 from ogquery.panel_axis import AnyVariantAxis, PanelVariantAxis
@@ -48,8 +49,14 @@ if TYPE_CHECKING:
     from ogquery.facade import HybridStoreQuery, RaggedStoreQuery, StoreQuery
 
 
-#: The command that rewrites a 0.2.3 release as 0.3.0, which the Store Reader reads alone.
+#: opengwasdb's command that rewrites a release of `REWRITABLE_FORMAT_VERSION` as 0.3.0,
+#: which the Store Reader reads alone. It refuses every other version.
 REWRITE_COMMAND = "ogdb rewrite-release"
+
+#: The one version `REWRITE_COMMAND` rewrites: 0.2.3, the last of the 0.2 series, whose
+#: features 0.3.0 keeps (`format.LAST_0_2_FORMAT_VERSION`). A 0.1.0 or 0.2.0-0.2.2 release
+#: lacks one of them -- reference-first indels, the SE count -- and is rebuilt from source.
+REWRITABLE_FORMAT_VERSION = LAST_0_2_FORMAT_VERSION
 
 
 class VariantTableReaderRequired(ValueError):
@@ -57,19 +64,30 @@ class VariantTableReaderRequired(ValueError):
 
     Those formats answer a query's variants from `variants.tsv.gz` (BGZF and tabix), which
     needs pysam, and from `index.sqlite`; ogquery reads neither. The caller either passes
-    a reader, `open_release(path, legacy=...)`, as opengwasdb's `open_store` does, or
-    rewrites the release as 0.3.0 with `REWRITE_COMMAND`. A `ValueError`, as the refusal
-    was before it had a name.
+    a reader, `open_release(path, legacy=...)`, as opengwasdb's `open_store` does, or makes
+    the release a 0.3.0 one: a 0.2.3 release is rewritten with `REWRITE_COMMAND`, and any
+    earlier one is rebuilt from source, since the rewrite refuses it (opengwasdb's
+    `store.rewrite`). The message says which applies. A `ValueError`, as the refusal was
+    before it had a name.
     """
 
     def __init__(self, path: Path, format_version: str) -> None:
         self.path = path
         self.format_version = format_version
+        if format_version == REWRITABLE_FORMAT_VERSION:
+            remedy = (
+                f"Rewrite it as 0.3.0 with `{REWRITE_COMMAND}` (opengwasdb), which ogquery "
+                "reads alone"
+            )
+        else:
+            remedy = (
+                f"Rebuild it from source at format 0.3.0, which ogquery reads alone; "
+                f"`{REWRITE_COMMAND}` rewrites only a {REWRITABLE_FORMAT_VERSION} release"
+            )
         super().__init__(
             f"{path} is format_version {format_version}, whose queries read its Store "
             "Variant Table (a BGZF/tabix file), and it was opened without a reader for its "
-            f"Store Variant Table. Rewrite it as 0.3.0 with `{REWRITE_COMMAND}` (opengwasdb), "
-            "which ogquery reads alone, or pass open_release(..., legacy=...), as "
+            f"Store Variant Table. {remedy}, or pass open_release(..., legacy=...), as "
             "opengwasdb's open_store does"
         )
 

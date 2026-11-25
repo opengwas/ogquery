@@ -16,6 +16,17 @@ readers see:
 - each manifest's `format_version` and each Indexed Variant Subset's
   `source_format_version` are re-spelt, byte for byte otherwise.
 
+Two limits of the copy, which the tests that use it accept:
+
+- **The version is a label.** `version` re-spells the stamp only. A `"0.2.0"`, `"0.2.2"`
+  or `"0.1.0"` copy still carries every 0.2.3 feature -- reference-first indels, the SE
+  count, Zarr v3 -- so it shows how a release of that stamp is refused, not how one is
+  read.
+- **The 0.2 ALID index is built with the reader's own rule.** Which ALIDs the
+  fixed-width pair holds is decided by `ogquery.alid.is_indexable_alid`, the predicate the
+  reader then searches by, so a drift in that predicate would show in neither. opengwasdb's
+  copy of the writer (`tests/format_0_2_3.py`, from `e93fba8f`) is the independent one.
+
 `index.sqlite` and the Top-Hit tiers' `abs_z` and `p_value`, which a 0.2 build also
 wrote, are not restored: the Store Reader reads neither (opengwasdb's validator does).
 A Hybrid is refused: its 0.2 Dense Component carries its own copy of the shared rows,
@@ -55,7 +66,8 @@ def write_fixed_width_alid_index(directory: Path, alids: list[str]) -> None:
 
 
 def as_0_2(release: Path, version: str = "0.2.3") -> Path:
-    """The 0.3.0 Dense or Ragged release at `release`, turned into a `version` one in place."""
+    """The 0.3.0 Dense or Ragged release at `release`, re-stamped `version` in place, with
+    the 0.2 series' files in place of 0.3.0's (a label only; module docstring)."""
     manifest = json.loads((release / "manifest.json").read_text(encoding="utf-8"))
     if manifest["primary_layout"] == "hybrid":
         raise ValueError(f"{release} is a Hybrid, whose 0.2 copy only opengwasdb can write")

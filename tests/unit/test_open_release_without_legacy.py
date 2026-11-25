@@ -1,5 +1,7 @@
 """`open_release(path)` with no Variant Table reader opens a 0.3.0 release (#474), and
-refuses a 0.2.x one by its `format_version` and the command that rewrites it (ogquery#1).
+refuses an earlier one by its `format_version` and how it becomes 0.3.0 (ogquery#1): a
+0.2.3 release by `ogdb rewrite-release`, an earlier one by a rebuild from source, since
+the rewrite refuses it.
 
 A 0.3.0 release's queries read its sidecars, never `variants.tsv.gz` (ADR 0105 §7, §8),
 so the Store Reader alone -- ogquery's whole read path -- must open it without the
@@ -22,7 +24,12 @@ from format_0_2 import GzipVariantTable, copy_as_0_2
 
 from ogquery.digests import VALUES, readable_value, release_answers
 from ogquery.facade import query_release
-from ogquery.release import REWRITE_COMMAND, VariantTableReaderRequired, open_release
+from ogquery.release import (
+    REWRITABLE_FORMAT_VERSION,
+    REWRITE_COMMAND,
+    VariantTableReaderRequired,
+    open_release,
+)
 from ogquery.variant_axis import VariantTableUnread
 
 BUNDLE = RELEASES
@@ -46,22 +53,44 @@ def test_a_0_3_0_read_that_reaches_the_table_is_refused_by_name():
         axis.tabix_range("1", 1, 10_000)
 
 
-@pytest.mark.parametrize("version", ["0.2.0", "0.2.3"])
-@pytest.mark.parametrize("name", ["dense_ranges", "ragged_completed"])
-def test_a_0_2_release_is_refused_naming_its_version_and_the_rewrite(
-    tmp_path: Path, name: str, version: str
-):
+def _refusal(tmp_path: Path, name: str, version: str) -> VariantTableReaderRequired:
     release = open_release(copy_as_0_2(BUNDLE / name, tmp_path, version))
     with pytest.raises(VariantTableReaderRequired) as refused:
         query_release(release)
-    message = str(refused.value)
-    assert f"format_version {version}" in message, message
-    assert "`ogdb rewrite-release`" in message and REWRITE_COMMAND == "ogdb rewrite-release"
+    assert (refused.value.format_version, refused.value.path) == (version, release.path)
+    return refused.value
+
+
+@pytest.mark.parametrize("name", ["dense_ranges", "ragged_completed"])
+def test_a_0_2_3_release_is_refused_naming_its_version_and_the_rewrite(
+    tmp_path: Path, name: str
+):
+    refused = _refusal(tmp_path, name, "0.2.3")
+    message = str(refused)
+    assert REWRITE_COMMAND == "ogdb rewrite-release" and REWRITABLE_FORMAT_VERSION == "0.2.3"
+    assert "format_version 0.2.3" in message, message
+    assert "Rewrite it as 0.3.0 with `ogdb rewrite-release`" in message, message
+    assert "Rebuild" not in message, message
     assert "open_release(..., legacy=...)" in message, message
     # The text opengwasdb's own test matches, and the type a caller already caught.
     assert "opened without a reader for its Store Variant Table" in message, message
-    assert isinstance(refused.value, ValueError)
-    assert (refused.value.format_version, refused.value.path) == (version, release.path)
+    assert isinstance(refused, ValueError)
+
+
+@pytest.mark.parametrize("version", ["0.1.0", "0.2.0", "0.2.2"])
+@pytest.mark.parametrize("name", ["dense_ranges", "ragged_completed"])
+def test_an_earlier_release_is_told_to_rebuild_not_to_rewrite(
+    tmp_path: Path, name: str, version: str
+):
+    """`ogdb rewrite-release` refuses anything but 0.2.3, so naming it as the remedy for an
+    earlier release would send the user to a command that fails."""
+    message = str(_refusal(tmp_path, name, version))
+    assert f"format_version {version}" in message, message
+    assert "Rebuild it from source at format 0.3.0" in message, message
+    assert "Rewrite it" not in message, message
+    assert "rewrites only a 0.2.3 release" in message, message
+    assert "open_release(..., legacy=...)" in message, message
+    assert "opened without a reader for its Store Variant Table" in message, message
 
 
 def test_a_0_2_release_opens_without_a_reader_until_a_query_needs_the_table(tmp_path: Path):
