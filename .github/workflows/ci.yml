@@ -3,9 +3,14 @@ name: CI
 # What every pull request into `main` and every push to it must pass (ogquery#1):
 #
 #   tests              the contract bundle (at its cross-machine tolerance), the
-#                      import-boundary test and the unit tests, on Linux, macOS and
-#                      Windows, each on the lowest and highest Python supported;
-#   floors             the same tests at the lowest numpy, zarr and numcodecs allowed;
+#                      import-boundary test, the LD read path (with the `http` extra,
+#                      its HTTP tests against a locally served Test Store) and the unit
+#                      tests, on Linux, macOS and Windows, each on the lowest and
+#                      highest Python supported;
+#   floors             the same tests at the lowest numpy, zarr, numcodecs, fsspec and
+#                      aiohttp allowed;
+#   no http extra      the LD read path without fsspec and aiohttp: local LD Stores
+#                      read, and an http(s) open names `ogquery[http]` (ogquery#2);
 #   lint               ruff, and mypy --strict on ogquery/ and scripts/;
 #   distributions      the source archive and the wheel, built as a release builds them,
 #                      and a strict-mypy caller of the installed wheel (py.typed);
@@ -45,6 +50,8 @@ jobs:
       OPENBLAS_NUM_THREADS: "1"
       OMP_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
+      # The LD format's property tests: derandomised, so a red run reproduces (tests/ld).
+      HYPOTHESIS_PROFILE: ci
     defaults:
       run:
         shell: bash
@@ -60,22 +67,27 @@ jobs:
           python-version: ${{ matrix.python }}
           allow-prereleases: true
 
-      - name: Install ogquery and the test tools
+      - name: Install ogquery, its http extra and the test tools
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[test]"
+          python -m pip install -e ".[test,http]"
           python -m pip check
 
-      # The bundle is bytes: .gitattributes keeps a Windows checkout from converting
-      # line endings, and this fails loudly if one ever does.
-      - name: The checkout holds the bundle's bytes
-        run: git diff --exit-code -- tests/contract
+      # The bundle and the LD test data are bytes: .gitattributes keeps a Windows checkout
+      # from converting line endings, and this fails loudly if one ever does.
+      - name: The checkout holds the bundle's and the LD test data's bytes
+        run: git diff --exit-code -- tests/contract tests/ld/data
 
       - name: The contract bundle
         run: python -m pytest tests/contract -v
 
       - name: The import boundary
-        run: python -m pytest tests/unit/test_store_reader_imports.py -v
+        run: python -m pytest tests/unit/test_store_reader_imports.py tests/ld/test_ld_imports.py -v
+
+      # The LD Test Store against its golden data, locally and served over HTTP from this
+      # machine (ogquery#2).
+      - name: The LD read path
+        run: python -m pytest tests/ld
 
       - name: The unit and tooling tests
         run: python -m pytest tests/unit tests/tooling
@@ -90,6 +102,7 @@ jobs:
     env:
       PYTHONNOUSERSITE: "1"
       OPENBLAS_NUM_THREADS: "1"
+      HYPOTHESIS_PROFILE: ci
     steps:
       - uses: actions/checkout@v4
         with:
@@ -100,15 +113,53 @@ jobs:
         with:
           python-version: "3.12"
 
+      # The `http` extra at its floors too (.github/floors-http.txt).
       - name: Install ogquery at its floors
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --only-binary=:all: -c .github/floors.txt -e ".[test]"
+          python -m pip install --only-binary=:all: -c .github/floors.txt \
+            -c .github/floors-http.txt -e ".[test,http]"
           python -m pip check
           python -c "import numpy, zarr, numcodecs; print(numpy.__version__, zarr.__version__, numcodecs.__version__)"
+          python -c "import fsspec, aiohttp; print(fsspec.__version__, aiohttp.__version__)"
 
-      - name: The contract, the import boundary and the unit tests
-        run: python -m pytest tests/contract tests/unit
+      - name: The contract, the import boundary, the LD read path and the unit tests
+        run: python -m pytest tests/contract tests/unit tests/ld
+
+  # Without the `http` extra (ogquery#2): fsspec and aiohttp are not installed, local LD
+  # Stores read, and an http(s) open raises HttpExtraMissing naming `ogquery[http]`
+  # (tests/ld/test_http_extra.py). The tests that serve a store over HTTP carry the `http`
+  # mark and are the ones left out; every other test passes without the extra.
+  no-http:
+    name: tests without the http extra
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONNOUSERSITE: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      HYPOTHESIS_PROFILE: ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ogquery and the test tools, not the http extra
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+          python -m pip check
+
+      - name: Neither fsspec nor aiohttp is installed
+        run: |
+          python -c "import importlib.util as u, sys; found = [m for m in ('fsspec', 'aiohttp') if u.find_spec(m)]; print(found); sys.exit(bool(found))"
+
+      - name: The LD read path and the unit tests, less the HTTP ones
+        run: python -m pytest tests/ld tests/unit -m "not http"
 
   lint:
     name: lint and typecheck
