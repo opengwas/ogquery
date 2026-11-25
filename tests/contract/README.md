@@ -28,7 +28,9 @@ expected answers.
 
 ## The releases
 
-Each of Dense, Ragged and Hybrid, Observed-Only and Reference-Completed. The six
+Each of Dense, Ragged and Hybrid, Observed-Only and Reference-Completed, and two more, `dense_rho` and
+`hybrid_overflow_only`, built from the same four Analyses (a Dense, and a Hybrid with an Overflow-only
+Analysis). The Dense and Hybrid ones carry a Rho Matrix (below). The six
 `*_observed` and `*_completed` releases are the test suite's digest releases; the three
 `*_ranges` ones span three chromosomes, so they pose every range question.
 
@@ -62,7 +64,9 @@ What each planted state is:
   Z for a finite Rho (window 1 bp, Z threshold 2, support floor 2), but are near-identical,
   so it is 1.0: `dense_rho` and `hybrid_overflow_only` hold the interior estimate (0.617); a Ragged release and
   the `*_ranges` ones hold none, and answer every Rho question empty or not at all
-  (a Ragged release has no Rho readers). `hybrid_overflow_only` is where the refusal is
+  (a Ragged release has no Rho readers); a Rho question naming an Analysis the release lacks is
+  `UnknownAnalysisError`, on every release that has Rho readers, and is refused before an
+  Overflow-only one. `hybrid_overflow_only` is where the refusal is
   exercised: a Rho question naming `trait_c` is `OverflowOnlyAnalysisError`, never a NaN;
   `trait_d`'s NaN is an Analysis with Rho but no support, which is not refused.
 - **Refusals.** Every release is asked `top_hits`, `analysis()` and `lookup()` of an

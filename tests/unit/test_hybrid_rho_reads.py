@@ -100,10 +100,16 @@ def test_a_matrix_that_does_not_record_its_overflow_only_analyses_is_refused(hyb
 
 @pytest.mark.parametrize(
     "recorded",
-    [["2"], [2.0], [True, 2], [2, 2], [5], -1],
-    ids=["string", "float", "bool", "repeated", "out-of-range", "not-a-list"],
+    [["2"], [2.0], [True, 2], [2, 2], [5], -1, [3, 2], [-1, 2]],
+    ids=[
+        "string", "float", "bool", "repeated", "out-of-range", "not-a-list",
+        "descending", "negative-element",
+    ],
 )
 def test_a_malformed_record_is_refused_not_coerced(hybrid: Path, recorded: object):
+    """Each is refused as `recorded_overflow_only` reads it, as opengwasdb `355449d7`'s
+    in-tree reader does (same function): `[3, 2]` is valid indices but not ascending, and
+    `[-1, 2]` has a negative element inside a list, as `-1` alone is not a list."""
     _rho_group(hybrid, "r+").attrs[OVERFLOW_ONLY_ATTR] = recorded
     with _query(hybrid) as query, pytest.raises(ValueError, match=OVERFLOW_ONLY_ATTR):
         query.rho_row("trait_a")
