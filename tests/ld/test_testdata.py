@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import hashlib
 import math
-import pathlib
 
 import numpy as np
 import pytest
 import testdata as td
 from store_copies import t_far
+from windows_paths import BackslashRelative
 
 HALF_STEP = 1 / 65534  # half of one int16 step: the quantisation tolerance (ld-store.md §3)
 T_FAR_K10 = t_far(771, 10)  # t_far for 771 samples at k = 10 (ADR 0087, decision 3)
@@ -227,11 +227,7 @@ def test_the_manifest_check_holds_where_paths_are_spelt_with_backslashes(
 ) -> None:
     # The manifest names files with `/`; a Windows checkout's relative paths use `\` (CI run
     # 45664832290), so the check compares POSIX spellings (opengwas/ogquery#2).
-    original = pathlib.Path.relative_to
-
-    def windows(self: pathlib.Path, *other: object, **kw: object) -> pathlib.PureWindowsPath:
-        return pathlib.PureWindowsPath(*original(self, *other, **kw).parts)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(pathlib.Path, "relative_to", windows)
+    # Only the loader's TEST_PANEL: every path the check reads derives from it.
+    monkeypatch.setattr(td, "TEST_PANEL", BackslashRelative(td.TEST_PANEL))
     assert str((td.TEST_PANEL / "plink2" / "x").relative_to(td.TEST_PANEL)) == "plink2\\x"
     test_every_file_matches_its_manifest_hash()

@@ -14,14 +14,14 @@ code is needed. Windows is reproduced on any platform by making `relative_to` gi
 from __future__ import annotations
 
 import json
-import pathlib
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 
 import numpy as np
 import pytest
 import zarr
 from store_copies import copy_store
 from support import TEST_STORE_K0, alids, panel_data, passing_rows
+from windows_paths import BackslashRelative, StatShifted
 
 import ogquery.ld
 from ogquery.ld.store import layout
@@ -81,13 +81,11 @@ def test_a_companion_answers_as_the_index_does(companion: Path) -> None:
 def test_a_companion_written_with_slashes_is_read_where_paths_use_backslashes(
     companion: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    original = pathlib.Path.relative_to
-
-    def windows(self: Path, *other: object, **kw: object) -> PureWindowsPath:
-        return PureWindowsPath(*original(self, *other, **kw).parts)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(pathlib.Path, "relative_to", windows)
-    assert str(Path("/a/b/c").relative_to("/a")) == "b\\c", "relative paths as Windows spells them"
+    # Only `layout`'s own Path: every path it pins a companion's files by derives from it.
+    monkeypatch.setattr(layout, "Path", BackslashRelative)
+    spelt = BackslashRelative("/a/b/c").relative_to("/a")
+    assert str(spelt) == "b\\c", "relative paths as Windows spells them"
+    assert not isinstance(Path("/a/b/c"), BackslashRelative), "nothing else sees it"
     store = ogquery.ld.open(companion)
     found = store.has(asked())
     assert store._reader._variant_table._alid_mmap is not None, "the companion answered"
@@ -101,24 +99,8 @@ def test_a_companion_is_read_where_a_path_s_stat_and_a_handle_s_differ(
     # before mapping": its payloads' identity was recorded from a path's stat and compared with
     # the opened file's fstat, and there the two disagree. Here a path's stat reports another
     # ctime; the reader records and compares descriptors' identities alone (opengwas/ogquery#2).
-    real = pathlib.Path.stat
-
-    class Shifted:
-        def __init__(self, stat: object) -> None:
-            self._stat = stat
-
-        def __getattr__(self, name: str) -> object:
-            return getattr(self._stat, name)
-
-        @property
-        def st_ctime_ns(self) -> int:
-            return int(self._stat.st_ctime_ns) + 1  # type: ignore[attr-defined]
-
-    def path_stat(self: Path, *args: object, **kwargs: object) -> object:
-        found = real(self, *args, **kwargs)  # type: ignore[arg-type]
-        return Shifted(found) if self.parent.parent.name == "alid_mmap" else found
-
-    monkeypatch.setattr(pathlib.Path, "stat", path_stat)
+    # Only `layout`'s own Path, which every path to a companion's payload derives from.
+    monkeypatch.setattr(layout, "Path", StatShifted)
     store = ogquery.ld.open(TEST_STORE_K0)
     assert store.has(asked()).any()
     assert store._reader._variant_table._alid_mmap is not None, "the companion answered"
