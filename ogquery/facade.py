@@ -385,7 +385,7 @@ class StoreQuery(_StoreQueryBase):
             if "rho" in self._root
             else None
         )
-        self._top_hits = TopHitTiers(self._root)
+        self._top_hits = store.top_hit_tiers(self._root)
 
     def close(self) -> None:
         if self._owns_axis:
@@ -621,7 +621,7 @@ class RaggedStoreQuery(_StoreQueryBase):
         self._reader.open_variant_index(self._variant_axis.n_variants)
         self._csr = self._reader.structure
         self._analyses = AnalysesIndex(store.path)
-        self._top_hits = TopHitTiers(store.arrays())
+        self._top_hits = store.top_hit_tiers()
         # Every result carries `n` exactly when the release has the plane, so a
         # caller can tell "no sample sizes here" from "no rows" (ADR 0067).
         self._has_n = self._reader.carries_n
@@ -782,7 +782,7 @@ class HybridStoreQuery(_StoreQueryBase):
             analyses=self._analyses,
         )
         self._overflow.open_variant_index(self._variant_axis.n_variants)
-        self._top_hits = TopHitTiers(store.arrays())  # overflow's own tiers
+        self._top_hits = store.top_hit_tiers()  # overflow's own tiers
 
     def close(self) -> None:
         self._dense.close()
