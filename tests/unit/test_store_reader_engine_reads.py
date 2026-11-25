@@ -15,20 +15,20 @@ import numpy as np
 import pytest
 import zarr
 
-from opengwasdb.store_reader.alid import RSID_DTYPE
-from opengwasdb.store_reader.alid_sidecar import write_alid_sidecar
-from opengwasdb.store_reader.format import CURRENT_FORMAT_VERSION
-from opengwasdb.store_reader.position_sidecar import write_position_sidecar
-from opengwasdb.store_reader.release import release_arrays
-from opengwasdb.store_reader.source_alid_sidecar import write_source_alid_sidecar
-from opengwasdb.store_reader.stored import (
+from ogquery.alid import RSID_DTYPE
+from ogquery.alid_sidecar import write_alid_sidecar
+from ogquery.format import CURRENT_FORMAT_VERSION
+from ogquery.position_sidecar import write_position_sidecar
+from ogquery.release import release_arrays
+from ogquery.source_alid_sidecar import write_source_alid_sidecar
+from ogquery.stored import (
     eaf_baseline,
     se_coefficients,
     sequence_arrays,
     stored_attributes,
 )
-from opengwasdb.store_reader.top_hits import analysis_hit_counts
-from opengwasdb.store_reader.variant_axis import VariantAxis, parse_variant_line
+from ogquery.top_hits import analysis_hit_counts
+from ogquery.variant_axis import VariantAxis, parse_variant_line
 
 
 class _Table:

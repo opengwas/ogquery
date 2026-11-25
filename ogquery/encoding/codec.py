@@ -39,8 +39,8 @@ from typing import Any, ClassVar, NoReturn, Self
 
 import numpy as np
 
-from opengwasdb.store_reader.arrays import array_length
-from opengwasdb.store_reader.encoding.plan import (
+from ogquery.arrays import array_length
+from ogquery.encoding.plan import (
     EAF_ABSENT,
     EAF_EXCEPTION,
     N_MISSING,

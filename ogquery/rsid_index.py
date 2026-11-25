@@ -38,8 +38,8 @@ from pathlib import Path
 
 import numpy as np
 
-from opengwasdb.store_reader.alid import RSID_DTYPE, is_indexable_rsid
-from opengwasdb.store_reader.npy_sidecar import invert_rows, open_pair_or_none
+from ogquery.alid import RSID_DTYPE, is_indexable_rsid
+from ogquery.npy_sidecar import invert_rows, open_pair_or_none
 
 VARIANT_RSID_BYTES_FILENAME = "variant_rsid_bytes.npy"
 VARIANT_RSID_ROWS_FILENAME = "variant_rsid_rows.npy"

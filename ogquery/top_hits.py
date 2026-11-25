@@ -5,7 +5,7 @@ A Top-Hit Index is a `top_hits/` group of one tier per significance threshold
 threshold, as parallel arrays ordered by ``(analysis_index, variant_index)`` with
 an ``analysis_offsets`` array addressing one Analysis's slice (spec, "Top-Hit
 Index"). Writing and checking a tier are `opengwasdb.top_hits`'s; the
-|z| a threshold cuts at is `opengwasdb.store_reader.stats.z_critical`.
+|z| a threshold cuts at is `ogquery.stats.z_critical`.
 """
 
 from __future__ import annotations

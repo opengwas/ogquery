@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from opengwasdb.store_reader.associations.cells import Cells, require_within
-from opengwasdb.store_reader.associations.record import Associations, Inspection, Status
+from ogquery.associations.cells import Cells, require_within
+from ogquery.associations.record import Associations, Inspection, Status
 
 if TYPE_CHECKING:
-    from opengwasdb.store_reader.indexed import IndexedSubset
+    from ogquery.indexed import IndexedSubset
 
 
 class SubsetReader:
@@ -33,7 +33,7 @@ class SubsetReader:
     def open(cls, store_path: str | Path, name: str) -> SubsetReader:
         # Imported here: the subset module's own validation classifies cells
         # through this package, so a module-level import would be circular.
-        from opengwasdb.store_reader.indexed import open_indexed_subset
+        from ogquery.indexed import open_indexed_subset
 
         return cls(
             open_indexed_subset(store_path, name),

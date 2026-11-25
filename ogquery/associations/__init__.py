@@ -10,10 +10,10 @@ the panel substitution, then SE) and its routing. Presence is `states()`, in
 `record`, and nowhere else (ADR 0070).
 """
 
-from opengwasdb.store_reader.associations.cells import Cells
-from opengwasdb.store_reader.associations.csr import CsrReader
-from opengwasdb.store_reader.associations.dense import DenseGridReader
-from opengwasdb.store_reader.associations.record import (
+from ogquery.associations.cells import Cells
+from ogquery.associations.csr import CsrReader
+from ogquery.associations.dense import DenseGridReader
+from ogquery.associations.record import (
     STATUS_LABELS,
     Associations,
     Inspection,
@@ -27,7 +27,7 @@ from opengwasdb.store_reader.associations.record import (
     states,
     statistics_of,
 )
-from opengwasdb.store_reader.associations.subset import SubsetReader
+from ogquery.associations.subset import SubsetReader
 
 __all__ = [
     "STATUS_LABELS",

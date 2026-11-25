@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 from format_0_2_3 import as_0_2_3
 
-from opengwasdb.store_reader.facade import query_release
-from opengwasdb.store_reader.release import open_release
+from ogquery.facade import query_release
+from ogquery.release import open_release
 
 BUNDLE = Path(__file__).parent / "store_reader_contract" / "releases"
 
@@ -32,7 +32,7 @@ def test_a_0_3_0_release_opens_and_answers_without_a_variant_table_reader(name: 
 
 
 def test_a_0_3_0_read_that_reaches_the_table_is_refused_by_name():
-    from opengwasdb.store_reader.variant_axis import VariantTableUnread
+    from ogquery.variant_axis import VariantTableUnread
 
     release = open_release(BUNDLE / "dense_ranges")
     axis = release.variant_axis(aliases=False)

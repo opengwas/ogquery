@@ -26,10 +26,10 @@ from typing import ClassVar, Protocol
 
 import numpy as np
 
-from opengwasdb.store_reader.alid import ALID_DTYPE, is_indexable_alid
-from opengwasdb.store_reader.alid_sidecar import ABSENT, AlidSidecar
-from opengwasdb.store_reader.format import carries_alid_sidecar
-from opengwasdb.store_reader.npy_sidecar import invert_rows, open_pair_or_none
+from ogquery.alid import ALID_DTYPE, is_indexable_alid
+from ogquery.alid_sidecar import ABSENT, AlidSidecar
+from ogquery.format import carries_alid_sidecar
+from ogquery.npy_sidecar import invert_rows, open_pair_or_none
 
 __all__ = [
     "ABSENT",

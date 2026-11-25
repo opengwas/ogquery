@@ -22,7 +22,7 @@ from typing import Any, NamedTuple
 
 import numpy as np
 
-from opengwasdb.store_reader.encoding.codec import (
+from ogquery.encoding.codec import (
     EAF_BASELINE,
     EAF_REFERENCE,
     SE_COEFFICIENTS,
@@ -37,7 +37,7 @@ from opengwasdb.store_reader.encoding.codec import (
     positions_row_band,
     positions_rows_cols,
 )
-from opengwasdb.store_reader.encoding.plan import EafBaselineError, EafEncoding, StoreEncoding
+from ogquery.encoding.plan import EafBaselineError, EafEncoding, StoreEncoding
 
 
 class EafRead(NamedTuple):

@@ -12,17 +12,17 @@ from pathlib import Path
 import numpy as np
 import zarr
 
-from opengwasdb.store_reader import arrays as store_arrays
-from opengwasdb.store_reader.arrays import array_length
-from opengwasdb.store_reader.encoding.codec import (
+from ogquery import arrays as store_arrays
+from ogquery.arrays import array_length
+from ogquery.encoding.codec import (
     StoreDecoder,
     ZOverflowTable,
     positions_at,
     positions_flat,
 )
-from opengwasdb.store_reader.encoding.plan import StoreEncoding
-from opengwasdb.store_reader.encoding.planes import EafRead, RaggedEafPlane, RaggedSePlane
-from opengwasdb.store_reader.manifest import StoreManifest
+from ogquery.encoding.plan import StoreEncoding
+from ogquery.encoding.planes import EafRead, RaggedEafPlane, RaggedSePlane
+from ogquery.manifest import StoreManifest
 
 RAGGED_ZARR_PATH = "data.zarr/ragged"
 
@@ -40,7 +40,7 @@ class RaggedCSRReader:
 
     What is public is structure, for code that walks the sequence itself: the
     offsets and spans, the variant index, the imputed mask and the pair search.
-    Associations are read through `opengwasdb.store_reader.associations.CsrReader`,
+    Associations are read through `ogquery.associations.CsrReader`,
     which applies the presence rule (ADR 0070). The decode members here serve it
     and one other caller, the Ragged Top-Hit harvest (`layouts/ragged/top_hits.py`).
     """

@@ -8,24 +8,24 @@ from pathlib import Path
 
 import numpy as np
 
-from opengwasdb.store_reader import arrays as store_arrays
-from opengwasdb.store_reader.associations import record
-from opengwasdb.store_reader.associations.cells import (
+from ogquery import arrays as store_arrays
+from ogquery.associations import record
+from ogquery.associations.cells import (
     Cells,
     require_run_within,
     require_within,
     window_region,
 )
-from opengwasdb.store_reader.associations.record import (
+from ogquery.associations.record import (
     Associations,
     Inspection,
     InvalidAssociations,
     State,
 )
-from opengwasdb.store_reader.by_variant import ByVariantReader, VariantIndexError, has_variant_index
-from opengwasdb.store_reader.csr import RAGGED_ZARR_PATH, RaggedCSRReader
-from opengwasdb.store_reader.encoding.plan import StoreEncoding
-from opengwasdb.store_reader.manifest import StoreManifest
+from ogquery.by_variant import ByVariantReader, VariantIndexError, has_variant_index
+from ogquery.csr import RAGGED_ZARR_PATH, RaggedCSRReader
+from ogquery.encoding.plan import StoreEncoding
+from ogquery.manifest import StoreManifest
 
 #: A by-variant index decode's columns, in `Inspection.of`'s order.
 _block_columns = itemgetter("variant_index", "analysis_index", "z", "se", "eaf", "imputed")

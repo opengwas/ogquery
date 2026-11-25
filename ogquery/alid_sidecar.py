@@ -33,7 +33,7 @@ from typing import ClassVar
 
 import numpy as np
 
-from opengwasdb.store_reader.npy_sidecar import (
+from ogquery.npy_sidecar import (
     encode_utf8_offsets,
     offsets_fault,
     open_sidecar_arrays,
@@ -158,7 +158,7 @@ def write_alid_sidecar(store_path: str | Path, alids: Sequence[str]) -> None:
 class AlidSidecar:
     """A release's ALID sidecar, memory-mapped: each row's ALID, and each ALID's row.
 
-    One of the two ALID indexes a Variant Axis opens (`opengwasdb.store_reader.alid_index`);
+    One of the two ALID indexes a Variant Axis opens (`ogquery.alid_index`);
     it holds every ALID, so it never answers that one is unindexed.
     """
 

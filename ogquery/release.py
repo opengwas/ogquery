@@ -30,13 +30,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from opengwasdb.store_reader.arrays import open_group
-from opengwasdb.store_reader.enums import PrimaryStorageLayout
-from opengwasdb.store_reader.format import carries_variant_offsets, check_format_version
-from opengwasdb.store_reader.hybrid import DENSE_TO_SHARED_FILENAME, shared_axis_root
-from opengwasdb.store_reader.manifest import StoreManifest
-from opengwasdb.store_reader.panel_axis import AnyVariantAxis, PanelVariantAxis
-from opengwasdb.store_reader.variant_axis import (
+from ogquery.arrays import open_group
+from ogquery.enums import PrimaryStorageLayout
+from ogquery.format import carries_variant_offsets, check_format_version
+from ogquery.hybrid import DENSE_TO_SHARED_FILENAME, shared_axis_root
+from ogquery.manifest import StoreManifest
+from ogquery.panel_axis import AnyVariantAxis, PanelVariantAxis
+from ogquery.variant_axis import (
     LegacyTableOpener,
     LegacyVariantTable,
     NoVariantTable,
@@ -44,7 +44,7 @@ from opengwasdb.store_reader.variant_axis import (
 )
 
 if TYPE_CHECKING:
-    from opengwasdb.store_reader.facade import HybridStoreQuery, RaggedStoreQuery, StoreQuery
+    from ogquery.facade import HybridStoreQuery, RaggedStoreQuery, StoreQuery
 
 
 def release_paths(path: Path) -> dict[str, Path]:
@@ -190,7 +190,7 @@ class StoreRelease(ReleasePaths):
 
     def query(self) -> StoreQuery | RaggedStoreQuery | HybridStoreQuery:
         """The query facade over this release, by its layout (ADR 0033)."""
-        from opengwasdb.store_reader.facade import query_release
+        from ogquery.facade import query_release
 
         return query_release(self)
 

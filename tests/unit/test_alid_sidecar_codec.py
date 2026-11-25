@@ -15,8 +15,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from opengwasdb.store_reader import alid_sidecar
-from opengwasdb.store_reader.alid_sidecar import (
+from ogquery import alid_sidecar
+from ogquery.alid_sidecar import (
     KEY_WIDTH,
     AlidSidecar,
     DuplicateAlidError,
@@ -124,7 +124,7 @@ def test_absent_files_open_as_none(tmp_path: Path) -> None:
 
 def test_the_codec_imports_nothing_but_numpy_and_the_stdlib() -> None:
     code = (
-        "import sys, opengwasdb.store_reader.alid_sidecar as m; "
+        "import sys, ogquery.alid_sidecar as m; "
         "bad = sorted(n for n in sys.modules if n.split('.')[0] in "
         "{'pysam', 'sqlite3', 'zarr', 'pandas', 'scipy'}); print(bad)"
     )

@@ -6,7 +6,7 @@ opens a release with the Store Reader -- `open_release(path)` and `query_release
 opengwasdb's `query_store`, and no Variant Table reader: a 0.3.0 release's table refuses
 every read, so a read that reached `variants.tsv.gz` fails the contract -- and compares
 its answers with that file. It imports the Store Reader and the questions
-(`opengwasdb.store.query_digests`) and nothing else of opengwasdb or of its tests, so the
+(`ogquery.digests`) and nothing else of opengwasdb or of its tests, so the
 directory moves to ogquery whole: there the imports below are the only lines that change.
 """
 
@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from opengwasdb.store.query_digests import (
+from ogquery.digests import (
     CROSS_MACHINE_RTOL,
     VALUES,
     differences,
@@ -24,8 +24,8 @@ from opengwasdb.store.query_digests import (
     readable_value,
     release_answers,
 )
-from opengwasdb.store_reader.facade import query_release
-from opengwasdb.store_reader.release import open_release
+from ogquery.facade import query_release
+from ogquery.release import open_release
 
 BUNDLE = Path(__file__).resolve().parent
 RELEASES = BUNDLE / "releases"

@@ -15,8 +15,8 @@ import numpy as np
 import pytest
 from test_store_reader_stats import exact_log10_p
 
-from opengwasdb.store_reader.associations import Associations
-from opengwasdb.store_reader.stats import association_statistics
+from ogquery.associations import Associations
+from ogquery.stats import association_statistics
 
 NAN = math.nan
 INF = math.inf

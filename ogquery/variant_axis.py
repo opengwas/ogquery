@@ -2,16 +2,16 @@
 
 A Store's variants are its Store Variant Table, one row per Store-local Variant
 Index, and the mmap'd search indexes beside it: the ALID index
-(`opengwasdb.store_reader.alid_index`: format 0.3.0's sidecar or the 0.2 series'
-fixed-width pair), the sorted rsID index (`opengwasdb.store_reader.rsid_index`, #109,
+(`ogquery.alid_index`: format 0.3.0's sidecar or the 0.2 series'
+fixed-width pair), the sorted rsID index (`ogquery.rsid_index`, #109,
 #127) and, from format 0.3.0, the position sidecar
-(`opengwasdb.store_reader.position_sidecar`), which answers a range. `VariantAxis`
+(`ogquery.position_sidecar`), which answers a range. `VariantAxis`
 answers every variant question a query asks from them.
 
 **From format 0.3.0 the Store Reader never reads the Variant Table** (#469, ADR 0105
 §7). A row's chromosome, position and alleles are its ALID's, which the ALID sidecar
 names; its rsID is the rsID index's, inverted; its `source_alid` is the `source_alid`
-sidecar's (`opengwasdb.store_reader.source_alid_sidecar`, #470); the variant count is
+sidecar's (`ogquery.source_alid_sidecar`, #470); the variant count is
 the ALID sidecar's. `variants_table()`, the record methods and `identity_by_indices`,
 `rsids_by_indices` and `source_alids_by_indices` answer from those, and
 `variant_offsets.npy` is not written. The table and its `.tbi` still ship, a convenience
@@ -40,26 +40,26 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from opengwasdb.store_reader.alid import ParsedAlid, parse_canonical_alid
-from opengwasdb.store_reader.alid_index import ABSENT, UNINDEXED, AlidIndex, open_alid_index
-from opengwasdb.store_reader.alid_sidecar import AlidSidecar
-from opengwasdb.store_reader.format import (
+from ogquery.alid import ParsedAlid, parse_canonical_alid
+from ogquery.alid_index import ABSENT, UNINDEXED, AlidIndex, open_alid_index
+from ogquery.alid_sidecar import AlidSidecar
+from ogquery.format import (
     carries_position_sidecar,
     carries_source_alid_sidecar,
     carries_variant_aliases,
     carries_variant_offsets,
 )
-from opengwasdb.store_reader.hybrid import DenseComponentSharesAxis, shared_axis_root
-from opengwasdb.store_reader.identity import normalise_chromosome
-from opengwasdb.store_reader.npy_sidecar import WINDOW_ROWS
-from opengwasdb.store_reader.position_sidecar import MissingPositionSidecar, PositionSidecar
-from opengwasdb.store_reader.rsid_index import (
+from ogquery.hybrid import DenseComponentSharesAxis, shared_axis_root
+from ogquery.identity import normalise_chromosome
+from ogquery.npy_sidecar import WINDOW_ROWS
+from ogquery.position_sidecar import MissingPositionSidecar, PositionSidecar
+from ogquery.rsid_index import (
     VARIANT_RSID_BYTES_FILENAME,
     VARIANT_RSID_ROWS_FILENAME,
     MissingRsidIndex,
     RsidIndex,
 )
-from opengwasdb.store_reader.source_alid_sidecar import (
+from ogquery.source_alid_sidecar import (
     MissingSourceAlidSidecar,
     SourceAlidSidecar,
 )
@@ -295,7 +295,7 @@ class VariantAxis:
 
     @property
     def alid_index(self) -> AlidIndex:
-        """The release's ALID index (`opengwasdb.store_reader.alid_index`)."""
+        """The release's ALID index (`ogquery.alid_index`)."""
         return self._alid_index
 
     @property

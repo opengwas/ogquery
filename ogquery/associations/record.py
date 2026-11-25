@@ -22,7 +22,7 @@ from typing import Any
 
 import numpy as np
 
-from opengwasdb.store_reader.stats import AssociationStatistics, association_statistics
+from ogquery.stats import AssociationStatistics, association_statistics
 
 
 class Status(IntEnum):

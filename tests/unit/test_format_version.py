@@ -27,8 +27,8 @@ import pytest
 
 from opengwasdb.layouts.dense.complete import complete_dense_store
 from opengwasdb.store import open as store_open
-from opengwasdb.store_reader import format as store_format
-from opengwasdb.store_reader.format import CURRENT_FORMAT_VERSION, PRE_RESET_FORMAT_VERSIONS
+from ogquery import format as store_format
+from ogquery.format import CURRENT_FORMAT_VERSION, PRE_RESET_FORMAT_VERSIONS
 
 
 def _set_version(store: Path, version: str) -> None:

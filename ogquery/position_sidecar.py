@@ -32,7 +32,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from opengwasdb.store_reader.npy_sidecar import (
+from ogquery.npy_sidecar import (
     dtype_fault,
     holds_sidecar,
     offsets_fault,

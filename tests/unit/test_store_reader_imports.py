@@ -1,6 +1,6 @@
 """The Store Reader imports numpy, zarr, numcodecs, the standard library and itself (#464).
 
-`opengwasdb.store_reader` is the read path every reader of a Store Release
+`ogquery` is the read path every reader of a Store Release
 uses, and becomes the `ogquery` package; its extraction is a directory move only
 while nothing in it reaches back into the rest of opengwasdb or into a heavy
 dependency. Two checks hold that:
@@ -8,7 +8,7 @@ dependency. Two checks hold that:
 - the static one parses every module in the subpackage and refuses any import --
   at module level, inside a function or under `TYPE_CHECKING`, which all couple
   a file to what it names -- outside numpy, zarr, numcodecs, the standard
-  library less `sqlite3`, and `opengwasdb.store_reader` itself;
+  library less `sqlite3`, and `ogquery` itself;
 - the run-time one imports the subpackage in a fresh interpreter and requires
   that pandas, scipy, pysam, sqlite3 and threadpoolctl were never loaded, which
   the static check cannot see through a parent package's `__init__`.
@@ -25,7 +25,7 @@ from architecture_model import imports_in_source
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = "opengwasdb/store_reader"
-OWN = "opengwasdb.store_reader"
+OWN = "ogquery"
 THIRD_PARTY = frozenset({"numpy", "zarr", "numcodecs"})
 REFUSED_STDLIB = frozenset({"sqlite3"})
 HEAVY = ("pandas", "scipy", "pysam", "sqlite3", "threadpoolctl")
@@ -61,7 +61,7 @@ def test_the_check_refuses_what_it_should():
             "import sqlite3",
             "from typing import TYPE_CHECKING",
             "from . import facade",
-            "from opengwasdb.store_reader.alid import parse_canonical_alid",
+            "from ogquery.alid import parse_canonical_alid",
             "if TYPE_CHECKING:",
             "    from opengwasdb.encoding.association_codec import Encoded",
             "def f():",
@@ -97,7 +97,7 @@ def test_importing_the_store_reader_loads_no_heavy_dependency():
         path[: -len(".py")].replace("/", ".").removesuffix(".__init__")
         for path in store_reader_sources()
     )
-    assert "opengwasdb.store_reader.facade" in modules
+    assert "ogquery.facade" in modules
     probe = (
         "import importlib, json, sys\n"
         f"for name in {modules!r}:\n"

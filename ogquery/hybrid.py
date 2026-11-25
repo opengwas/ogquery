@@ -25,7 +25,7 @@ shared → dense translation (`panel_rows`).
 **From format 0.3.0 the Dense Component carries no variant identity of its own**
 (#472, ADR 0102 §4): no Variant Table, `.tbi`, ALID, position or rsID sidecar, no
 `analyses.tsv` and no `overview.html`. Its Variant Axis is the shared one seen through
-``dense_to_shared`` (`opengwasdb.store_reader.panel_axis`), and its Analyses are the
+``dense_to_shared`` (`ogquery.panel_axis`), and its Analyses are the
 root's. Before 0.3.0 it carried a copy of each, which a completed release let fall out
 of step with the shared table (#481).
 """
@@ -38,7 +38,7 @@ from pathlib import Path
 
 import numpy as np
 
-from opengwasdb.store_reader.format import dense_component_shares_axis
+from ogquery.format import dense_component_shares_axis
 
 DENSE_SUBDIR = "dense"
 DENSE_TO_SHARED_FILENAME = "dense_to_shared.npy"

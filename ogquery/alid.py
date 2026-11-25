@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from opengwasdb.store_reader.identity import (
+from ogquery.identity import (
     VariantNormalisationError,
     normalise_allele,
     normalise_chromosome,

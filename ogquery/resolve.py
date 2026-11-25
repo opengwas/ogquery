@@ -1,7 +1,7 @@
 """Resolve index-keyed query results to human-readable rows (issue #104).
 
 Every association-returning method on `StoreQuery`/`RaggedStoreQuery`/
-`HybridStoreQuery` (`opengwasdb.store_reader.facade`) returns index-keyed parallel
+`HybridStoreQuery` (`ogquery.facade`) returns index-keyed parallel
 arrays (ADR-0020) -- `variant_index`/`analysis_index` rather than variant/
 analysis identity. `resolve_rows()` is the join back to identity.
 
@@ -36,9 +36,9 @@ from collections.abc import Iterator, Mapping
 
 import numpy as np
 
-from opengwasdb.store_reader.analyses import AnalysesIndex
-from opengwasdb.store_reader.associations.record import statistics_of
-from opengwasdb.store_reader.panel_axis import AnyVariantAxis
+from ogquery.analyses import AnalysesIndex
+from ogquery.associations.record import statistics_of
+from ogquery.panel_axis import AnyVariantAxis
 
 
 def resolve_rows(

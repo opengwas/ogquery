@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from opengwasdb.store_reader.position_sidecar import (
+from ogquery.position_sidecar import (
     CHROMOSOME_OFFSETS_FILENAME,
     CHROMOSOMES_FILENAME,
     POSITION_FILENAME,
@@ -204,7 +204,7 @@ def test_misplaced_names_each_row_the_sidecar_places_elsewhere(tmp_path: Path) -
 
 def test_the_codec_imports_numpy_and_the_standard_library_only() -> None:
     code = (
-        "import sys; import opengwasdb.store_reader.position_sidecar; "
+        "import sys; import ogquery.position_sidecar; "
         "print(sorted(m for m in ('pysam', 'sqlite3', 'zarr', 'pandas') if m in sys.modules))"
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)

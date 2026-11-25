@@ -12,13 +12,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from opengwasdb.store_reader.encoding.plan import StoreEncoding, UnsupportedEncoding
-from opengwasdb.store_reader.enums import (
+from ogquery.encoding.plan import StoreEncoding, UnsupportedEncoding
+from ogquery.enums import (
     AssociationCoverage,
     CompletionState,
     PrimaryStorageLayout,
 )
-from opengwasdb.store_reader.format import check_format_version
+from ogquery.format import check_format_version
 
 
 def _encoding_from_dict(data: dict[str, Any]) -> StoreEncoding:

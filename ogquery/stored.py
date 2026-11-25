@@ -7,9 +7,9 @@ it is stored: a validation rule that judges the storage itself reads stored
 codes, chunking and attributes, and a builder that adds to a release, or
 completes one, reads the side arrays its source was coded against rather than
 refitting them. They ask for them here, and a release's whole `data.zarr` group
-from `opengwasdb.store_reader.release.release_arrays` (what `StoreRelease.arrays`
+from `ogquery.release.release_arrays` (what `StoreRelease.arrays`
 is), so where a release keeps its arrays and how they are opened (read-only,
-through `opengwasdb.store_reader.arrays.open_group`) are known to the Store
+through `ogquery.arrays.open_group`) are known to the Store
 Reader alone.
 
 A group these functions return is zarr's, opened read-only: a caller that
@@ -23,9 +23,9 @@ from typing import Any
 
 import numpy as np
 
-from opengwasdb.store_reader.arrays import open_group
-from opengwasdb.store_reader.csr import RAGGED_ZARR_PATH
-from opengwasdb.store_reader.encoding.codec import EAF_BASELINE, SE_COEFFICIENTS
+from ogquery.arrays import open_group
+from ogquery.csr import RAGGED_ZARR_PATH
+from ogquery.encoding.codec import EAF_BASELINE, SE_COEFFICIENTS
 
 
 def sequence_arrays(release: str | Path) -> Any:

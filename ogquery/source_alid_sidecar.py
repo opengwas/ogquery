@@ -43,7 +43,7 @@ from typing import ClassVar
 
 import numpy as np
 
-from opengwasdb.store_reader.npy_sidecar import (
+from ogquery.npy_sidecar import (
     OFFSET_DTYPE,
     WINDOW_ROWS,
     dtype_fault,

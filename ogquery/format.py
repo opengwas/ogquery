@@ -137,7 +137,7 @@ ZARR_FORMAT_BY_SERIES: Mapping[tuple[int, ...], int] = MappingProxyType(
 )
 
 #: The first `format_version` whose ALID index is the variable-length sidecar
-#: (`opengwasdb.store_reader.alid_sidecar`, ADR 0105) and not the fixed-width pair.
+#: (`ogquery.alid_sidecar`, ADR 0105) and not the fixed-width pair.
 ALID_SIDECAR_SINCE = tuple(int(part) for part in ALID_SIDECAR_FORMAT_VERSION.split("."))
 
 
@@ -185,7 +185,7 @@ def carries_stored_p(version: str) -> bool:
 
 
 #: The first `format_version` that answers a range from the position sidecar
-#: (`opengwasdb.store_reader.position_sidecar`, ADR 0105 §6) and not through tabix.
+#: (`ogquery.position_sidecar`, ADR 0105 §6) and not through tabix.
 #: 0.3.0 is one format version: every release that carries the ALID sidecar carries
 #: this one too.
 POSITION_SIDECAR_SINCE = ALID_SIDECAR_SINCE
@@ -210,7 +210,7 @@ def carries_variant_offsets(version: str) -> bool:
 
 
 #: The first `format_version` that carries each row's `source_alid` in its own sidecar
-#: (`opengwasdb.store_reader.source_alid_sidecar`, ADR 0105 §8, #470) and not only in the
+#: (`ogquery.source_alid_sidecar`, ADR 0105 §8, #470) and not only in the
 #: Variant Table's eighth column. 0.3.0 is one format version, so it is the ALID sidecar's.
 SOURCE_ALID_SIDECAR_SINCE = ALID_SIDECAR_SINCE
 

@@ -15,8 +15,8 @@ import numpy as np
 import pytest
 from scipy import special, stats
 
-from opengwasdb.store_reader.stats import log10_p_two_sided, p_value_from_z, z_critical
-from opengwasdb.store_reader.top_hits import TOP_HIT_THRESHOLDS
+from ogquery.stats import log10_p_two_sided, p_value_from_z, z_critical
+from ogquery.top_hits import TOP_HIT_THRESHOLDS
 
 
 def scipy_log10_p(z: np.ndarray) -> np.ndarray:

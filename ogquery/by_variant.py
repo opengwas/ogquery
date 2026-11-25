@@ -13,10 +13,10 @@ from typing import Any
 
 import numpy as np
 
-from opengwasdb.store_reader import arrays as store_arrays
-from opengwasdb.store_reader.arrays import array_length
-from opengwasdb.store_reader.csr import RAGGED_ZARR_PATH
-from opengwasdb.store_reader.encoding.codec import (
+from ogquery import arrays as store_arrays
+from ogquery.arrays import array_length
+from ogquery.csr import RAGGED_ZARR_PATH
+from ogquery.encoding.codec import (
     EAF_BASELINE,
     EAF_REFERENCE,
     SE_COEFFICIENTS,
@@ -26,9 +26,9 @@ from opengwasdb.store_reader.encoding.codec import (
     ZOverflowTable,
     positions_flat,
 )
-from opengwasdb.store_reader.encoding.plan import EafBaselineError, StoreEncoding
-from opengwasdb.store_reader.manifest import StoreManifest
-from opengwasdb.store_reader.stored import optional_array
+from ogquery.encoding.plan import EafBaselineError, StoreEncoding
+from ogquery.manifest import StoreManifest
+from ogquery.stored import optional_array
 
 #: The index group, under the Ragged component's own group (ADR 0060).
 BY_VARIANT_GROUP = "by_variant"

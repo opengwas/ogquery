@@ -24,7 +24,7 @@ release reads them from its Variant Table, a 0.3.0 one from its sidecars (#469, 
 
 **Values, not digests: `pval` and `log10_p`.** Every answer's `pval`, and a resolved row's
 `pval` and `log10_p`, are kept as numbers (`VALUES`), not digested. Both are the libm's
-(`store_reader.stats`: `erfc`, `erf`, `log` and `log1p`), which differ in the last ulp
+(`ogquery.stats`: `erfc`, `erf`, `log` and `log1p`), which differ in the last ulp
 between one C library and another, so answers written on one machine and read on another
 are compared with `differences(..., rtol=CROSS_MACHINE_RTOL)`: four float64 ulps, NaN at
 the same place counting as equal. They are the only values so derived: every other float
@@ -80,11 +80,11 @@ from typing import Any
 
 import numpy as np
 
-from opengwasdb.store_reader.analyses import UnknownAnalysisError
-from opengwasdb.store_reader.associations import Associations
-from opengwasdb.store_reader.identity import VariantNormalisationError
-from opengwasdb.store_reader.indexed import list_indexed_subsets
-from opengwasdb.store_reader.top_hits import UnstoredThresholdError
+from ogquery.analyses import UnknownAnalysisError
+from ogquery.associations import Associations
+from ogquery.identity import VariantNormalisationError
+from ogquery.indexed import list_indexed_subsets
+from ogquery.top_hits import UnstoredThresholdError
 
 #: Opens a release for its questions: the query facade over the release at a path.
 QueryOpener = Callable[[Path], Any]

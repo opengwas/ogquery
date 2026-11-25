@@ -6,7 +6,7 @@ the store manifest: `StoreQuery` (Dense), `RaggedStoreQuery` (Ragged),
 `HybridStoreQuery` (Hybrid). See ADR-0033 for the full rationale; in short:
 
 Result shape -- every association-returning method returns an
-`opengwasdb.store_reader.associations.Associations` record. Read as a mapping it is the
+`ogquery.associations.Associations` record. Read as a mapping it is the
 contract ADR 0020 set: ``{"variant_index", "analysis_index", "z", "se", "eaf",
 "association_status"}`` as parallel arrays (int32, int32, float32, float32,
 float32, object), and ``"beta"`` and ``"pval"`` (float64), which the record
@@ -30,7 +30,7 @@ accepted, on every internal path: `observed_only` narrows the result set
 first, `limit` then caps the already-filtered rows.
 
 Presence (ADR 0070, superseding ADR 0033 §7) -- every read goes through
-`opengwasdb.store_reader.associations`, so one rule decides presence on every layout and
+`ogquery.associations`, so one rule decides presence on every layout and
 every method, `top_hits()` included: an association is present exactly when
 neither its Z nor its SE carries its plane's missing marker (spec §15). An
 infinite SE is a value, returned with its Status: only a release before format
@@ -57,7 +57,7 @@ grouping Ragged Analyses by a shared gene filters this table on
 `trait_ontology_id` rather than through a separate lookup. `analysis_label`
 reaches a caller as the stored column, blank included -- a release that
 supplied no label says so, rather than having one invented for it; a *display*
-label is `opengwasdb.store_reader.analyses.analysis_label()`'s job, the one
+label is `ogquery.analyses.analysis_label()`'s job, the one
 implementation of that fallback (issue #57). `rho()`/`rho_row()`/
 `rho_matrix()` (ADR-0025, a Dense storage artifact) are exposed
 on `StoreQuery` and on `HybridStoreQuery` (delegated to its Dense Component);
@@ -75,29 +75,29 @@ from typing import Any, NoReturn, Self
 
 import numpy as np
 
-from opengwasdb.store_reader import stats as reader_stats
-from opengwasdb.store_reader.analyses import AnalysesIndex
-from opengwasdb.store_reader.associations import (
+from ogquery import stats as reader_stats
+from ogquery.analyses import AnalysesIndex
+from ogquery.associations import (
     Associations,
     Cells,
     CsrReader,
     DenseGridReader,
     SubsetReader,
 )
-from opengwasdb.store_reader.csr import RaggedCSRReader
-from opengwasdb.store_reader.enums import CompletionState, PrimaryStorageLayout
-from opengwasdb.store_reader.format import carries_variant_aliases
-from opengwasdb.store_reader.hybrid import dense_to_shared_path, panel_rows
-from opengwasdb.store_reader.indexed import (
+from ogquery.csr import RaggedCSRReader
+from ogquery.enums import CompletionState, PrimaryStorageLayout
+from ogquery.format import carries_variant_aliases
+from ogquery.hybrid import dense_to_shared_path, panel_rows
+from ogquery.indexed import (
     IndexedSubsetError,
     IndexedSubsetLayoutError,
     rescope_indexed_subset_error,
 )
-from opengwasdb.store_reader.panel_axis import AnyVariantAxis, PanelVariantAxis
-from opengwasdb.store_reader.release import StoreRelease
-from opengwasdb.store_reader.resolve import resolve_rows
-from opengwasdb.store_reader.rho import DenseRhoReader
-from opengwasdb.store_reader.top_hits import TierRows, TopHitTier, TopHitTiers
+from ogquery.panel_axis import AnyVariantAxis, PanelVariantAxis
+from ogquery.release import StoreRelease
+from ogquery.resolve import resolve_rows
+from ogquery.rho import DenseRhoReader
+from ogquery.top_hits import TierRows, TopHitTier, TopHitTiers
 
 
 def _ragged_tier_record(
@@ -332,7 +332,7 @@ class _StoreQueryBase:
         self, result: Mapping[str, np.ndarray], *, include_variant_info: bool = False
     ) -> Iterator[dict[str, object]]:
         """Resolve a raw (index-keyed) result to human-readable rows (issue #104);
-        see `opengwasdb.store_reader.resolve.resolve_rows`."""
+        see `ogquery.resolve.resolve_rows`."""
         return resolve_rows(
             self._analyses, self._variant_axis, result, include_variant_info=include_variant_info
         )

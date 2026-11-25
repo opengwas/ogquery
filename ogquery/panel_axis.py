@@ -33,10 +33,10 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from opengwasdb.store_reader.alid import ParsedAlid
-from opengwasdb.store_reader.alid_index import ABSENT, AlidIndex
-from opengwasdb.store_reader.hybrid import DenseComponentSharesAxis, panel_rows
-from opengwasdb.store_reader.variant_axis import (
+from ogquery.alid import ParsedAlid
+from ogquery.alid_index import ABSENT, AlidIndex
+from ogquery.hybrid import DenseComponentSharesAxis, panel_rows
+from ogquery.variant_axis import (
     VariantAxis,
     VariantRecord,
 )

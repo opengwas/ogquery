@@ -24,7 +24,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
-from opengwasdb.store_reader.encoding.codec import SE_COEFFICIENTS as SE_COEFFICIENTS_KEY
+from ogquery.encoding.codec import SE_COEFFICIENTS as SE_COEFFICIENTS_KEY
 
 #: Length-indexed flat arrays (Ragged CSR association sequences): one chunk of
 #: this many cells, never clipped -- a short array keeps the same declared chunk

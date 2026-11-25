@@ -23,10 +23,10 @@ from typing import Any
 import numpy as np
 import zarr
 
-from opengwasdb.store_reader import arrays as store_arrays
-from opengwasdb.store_reader.arrays import array_length
-from opengwasdb.store_reader.assembly import normalise_build
-from opengwasdb.store_reader.encoding.codec import (
+from ogquery import arrays as store_arrays
+from ogquery.arrays import array_length
+from ogquery.assembly import normalise_build
+from ogquery.encoding.codec import (
     EAF_BASELINE,
     EAF_EXCEPTION_INDEX,
     EAF_EXCEPTION_VALUE,
@@ -40,19 +40,19 @@ from opengwasdb.store_reader.encoding.codec import (
     ZOverflowTable,
     positions_flat,
 )
-from opengwasdb.store_reader.encoding.plan import StoreEncoding, UnsupportedEncoding
-from opengwasdb.store_reader.enums import CompletionState, PrimaryStorageLayout
-from opengwasdb.store_reader.format import zarr_format_for_version
-from opengwasdb.store_reader.hybrid import dense_component_path
-from opengwasdb.store_reader.layout import (
+from ogquery.encoding.plan import StoreEncoding, UnsupportedEncoding
+from ogquery.enums import CompletionState, PrimaryStorageLayout
+from ogquery.format import zarr_format_for_version
+from ogquery.hybrid import dense_component_path
+from ogquery.layout import (
     INDEXED_SUBSET_CHUNK,
     ArrayRole,
     chunk_layout,
     shard_layout,
 )
-from opengwasdb.store_reader.manifest import StoreManifest
-from opengwasdb.store_reader.release import open_release
-from opengwasdb.store_reader.stored import eaf_baseline, se_coefficients
+from ogquery.manifest import StoreManifest
+from ogquery.release import open_release
+from ogquery.stored import eaf_baseline, se_coefficients
 
 #: The group under `data.zarr` that holds every Indexed Variant Subset.
 INDEXED_SUBSETS_GROUP = "indexed_subsets"

@@ -7,8 +7,8 @@ from typing import Any, NamedTuple
 
 import numpy as np
 
-from opengwasdb.store_reader.associations.cells import Cells, require_within, window_region
-from opengwasdb.store_reader.associations.record import (
+from ogquery.associations.cells import Cells, require_within, window_region
+from ogquery.associations.record import (
     Associations,
     Inspection,
     InvalidAssociations,
@@ -19,8 +19,8 @@ from opengwasdb.store_reader.associations.record import (
     non_canonical,
     require_mask,
 )
-from opengwasdb.store_reader.encoding.plan import StoreEncoding
-from opengwasdb.store_reader.encoding.planes import DenseEafPlane, DenseSePlane, DenseZPlane
+from ogquery.encoding.plan import StoreEncoding
+from ogquery.encoding.planes import DenseEafPlane, DenseSePlane, DenseZPlane
 
 
 class _Grid(NamedTuple):
