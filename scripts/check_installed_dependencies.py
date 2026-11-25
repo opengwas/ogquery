@@ -30,6 +30,7 @@ import re
 import sys
 from importlib.metadata import Distribution, distribution, distributions
 from pathlib import Path
+from typing import Any
 
 from packaging.requirements import Requirement
 
@@ -77,7 +78,7 @@ def installed() -> dict[str, str]:
     return {canonical(d.metadata["Name"]): d.version for d in distributions()}
 
 
-def problems(report: dict[str, object]) -> list[str]:
+def problems(report: dict[str, Any]) -> list[str]:
     out = []
     direct = {canonical(r.name) for r in _requirements(distribution(PACKAGE), frozenset())}
     if direct != DIRECT:
@@ -86,7 +87,7 @@ def problems(report: dict[str, object]) -> list[str]:
     stray = sorted(set(installed()) - allowed)
     if stray:
         out.append(f"installed beyond ogquery's dependencies: {stray}")
-    for item in report.get("install", []):  # type: ignore[union-attr]
+    for item in report["install"]:
         url = item["download_info"]["url"]
         name = item["metadata"]["name"]
         if not url.split("#")[0].endswith(".whl"):

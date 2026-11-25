@@ -64,9 +64,9 @@ def test_the_strongest_fragment_type_wins() -> None:
 def test_no_previous_tag_starts_from_zero() -> None:
     """Nothing to bump: a fix is 0.0.1, a feature 0.1.0.
 
-    The workflow always has a tag after the cutover, but a repository whose
-    tags were lost must still produce a version, and one that is obviously the
-    first rather than a plausible continuation.
+    ogquery's first release is made this way (the repository's first commit is
+    never released), and a repository whose tags were lost must still produce a
+    version, one that is obviously the first rather than a plausible continuation.
     """
     assert release.next_version(None, ["fixed"]) == "0.0.1"
     assert release.next_version(None, ["added"]) == "0.1.0"
@@ -413,9 +413,9 @@ def test_a_git_failure_is_an_error_not_an_empty_answer(
 def test_only_the_newest_tag_is_resumed_when_no_release_exists(repo: Path) -> None:
     """A repository whose tags all predate the workflow gets one Release, not N.
 
-    At the cutover every tag on the remote is older than this machinery, so
-    resuming them all would publish a Release for each historical tag -- the
-    opposite of "the first run creates exactly the cutover's Release".
+    Tags pushed by hand before any Release carry no fragments, so resuming them
+    all would publish a Release for each -- the opposite of "the first run creates
+    exactly the newest tag's Release".
     """
     _git(repo, "tag", "--annotate", "v0.2.0", "--message", "Release v0.2.0", "HEAD~0")
     _git(repo, "push", "-q", "origin", "refs/tags/v0.2.0")
@@ -428,7 +428,7 @@ def test_only_the_newest_tag_is_resumed_when_no_release_exists(repo: Path) -> No
         tags=tags,
         merges=[
             release.Merge(
-                commit=tags["v0.3.0"], subject="cutover", tag="v0.3.0"
+                commit=tags["v0.3.0"], subject="a tag pushed by hand", tag="v0.3.0"
             )
         ],
         repository=REPO,
@@ -672,15 +672,15 @@ def test_the_plan_resumes_a_tag_whose_release_is_missing(
     )
 
 
-def test_the_plan_refuses_to_release_a_history_before_a_cutover(
+def test_the_plan_refuses_to_release_a_rebased_branch_commit_by_commit(
     repo: Path, stub_gh: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A cutover replays a whole merged branch, and that is not 64 versions.
+    """A pull request merged by rebase puts each of its commits on `main`'s first-parent
+    line, and that is not one version per commit.
 
-    `dev` is 571 commits ahead of the last tag; the first push of it into `main`
-    would make every first-parent commit after `v0.2.0` "owed a release". The
-    plan refuses a burst larger than `--max-releases` and says what to do: tag
-    the merge commit before pushing `main`.
+    ogquery#1 carries some 65 commits of history; rebased onto `main`, every one would be
+    "owed a release". The plan refuses a burst larger than `--max-releases` and says
+    what to do: tag by hand, or merge with a merge commit.
     """
     for index in range(3):
         _add(repo, f"{index}-a.fixed.md", "- Fixed one.\n", f"fix {index}")
@@ -689,7 +689,7 @@ def test_the_plan_refuses_to_release_a_history_before_a_cutover(
         ["plan", "--repository", REPO, "--max-releases", "2"]
     ) == 1
     error = capsys.readouterr().err
-    assert "cutover" in error
+    assert "merged by rebase" in error and "merge commit" in error
     assert "3" in error
 
 

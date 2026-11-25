@@ -26,8 +26,8 @@ three quick merges can leave the middle one untagged with nothing to retry it.
 Each run therefore publishes *every* first-parent commit after the newest `v*`
 tag that has no tag of its own, and any tagged commit whose Release is missing
 and is newer than the newest Release there is, oldest first. A lost run is
-caught up by the next one, and the cutover's tag is repaired without inventing
-Releases for tags from before this workflow existed.
+caught up by the next one, and a tag whose Release was never created is repaired
+without inventing Releases for any older tag.
 
 **Resumption.** Publication is two steps per commit -- push the tag, create the
 Release -- and each is skipped when the *remote* says it is already done. A run
@@ -81,10 +81,11 @@ FRAGMENT_README = "README.md"
 #: `git diff` needs a tree for a commit with no parent; this is git's own empty one.
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 #: How many merges one run may publish. A lost run is caught up here, but a
-#: whole merged branch is not a burst of lost runs: at opengwasdb's cutover `dev` was 64
-#: first-parent commits past the last tag, and replaying them would have published 64
-#: patch versions and no `0.3.0`. Above this many, the run stops and asks for a
-#: tag instead.
+#: branch whose commits reached `main` one by one is not a burst of lost runs: a pull
+#: request merged by rebase, rather than by a merge commit, puts each of its commits on
+#: the first-parent line, and the first one (ogquery#1, some 65 commits with the history
+#: it carries) would publish a patch version per commit and no `0.1.0`. Above this many,
+#: the run stops and asks for a tag instead. Merge with a merge commit (CONTRIBUTING.md).
 MAX_PLANNED_RELEASES = 20
 #: Commits on `main` that are never a version. The repository's first commit
 #: ("Start ogquery: GPL-3.0-only with Harmony contributor agreements") holds the
@@ -475,11 +476,11 @@ def _newest_and_missing(
 def resume_tags(tags: dict[str, str], released: set[str]) -> set[str]:
     """The tags whose missing Release is worth creating, and no older ones.
 
-    Only tags newer than the newest existing Release are repaired, so the first
-    run after the cutover creates the cutover's Release and not one for every
-    tag the project ever made. A repository with no Releases at all resumes
-    just its newest tag -- the cutover's -- for the same reason: a tag from
-    2026 whose history predates fragments is not worth a Release now.
+    Only tags newer than the newest existing Release are repaired, so a run that
+    finds tags without Releases creates the newest one's and not one for every tag
+    the project ever made. A repository with no Releases at all resumes just its
+    newest tag for the same reason: a tag pushed by hand, before any Release, carries
+    no fragments to make notes of.
     """
     missing, existing = _newest_and_missing(tags, released)
     if not missing:
@@ -782,10 +783,10 @@ def _run_plan(args: argparse.Namespace) -> int:
     if len(commits) > args.max_releases:
         raise ReleaseError(
             f"{len(commits)} merges are owed a version, more than the "
-            f"{args.max_releases} one run will publish. If this is the cutover "
-            f"-- the first push of the integration branch into main -- tag the "
-            f"merge commit before pushing main, so the history before it is not "
-            f"replayed as versions; otherwise re-run with --max-releases."
+            f"{args.max_releases} one run will publish. A pull request merged by "
+            f"rebase puts each of its commits on main; tag the newest of them by "
+            f"hand (or revert and merge it with a merge commit), so its commits are "
+            f"not replayed as versions; otherwise re-run with --max-releases."
         )
     plan = collect(tags, released, args.repository, commits)
     _print_plan(plan)

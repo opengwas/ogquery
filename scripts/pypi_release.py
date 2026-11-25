@@ -61,11 +61,12 @@ from release import (
 )
 
 #: The first tag published to PyPI; no older tag ever is. It is ogquery's first
-#: release, the merge that adds the package (opengwas/ogquery#1), set explicitly
-#: (opengwasdb ADR 0083). The PyPI project's 0.0.0 placeholder is below it and is
-#: never touched. `None` turns PyPI publication off: set it there to rehearse a
-#: tag on TestPyPI first (`publish.yml` with `index=testpypi`), then back to that
-#: tag, as opengwasdb did for its first PyPI release.
+#: release, the merge that adds the package (opengwas/ogquery#1). The boundary starts
+#: open, by the owner's ruling of 25 Nov 2026 (ADR 0001): v0.1.0 goes to PyPI when it
+#: is tagged, with no TestPyPI rehearsal first. That departs from opengwasdb ADR 0083,
+#: whose boundary starts closed (`None`) and opens only after a rehearsal. The PyPI
+#: project's 0.0.0 placeholder is below it and is never touched. `None` turns PyPI
+#: publication off, should a later rehearsal be wanted.
 PYPI_FIRST_RELEASE: str | None = "v0.1.0"
 
 PROJECT = "ogquery"
