@@ -85,7 +85,8 @@ file 758004ba3319ded3728c15ba9bba968683ef50cc tests/ld/testdata.py
 #
 #   pixi install --locked -e dev
 #   SETUPTOOLS_SCM_PRETEND_VERSION=0.20.0 pixi reinstall -e dev opengwasdb
-#   OPENBLAS_NUM_THREADS=1 pixi run -e dev python scripts/ld/make_test_store.py \
+#   PYTHONNOUSERSITE=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+#       pixi run -e dev python scripts/ld/make_test_store.py \
 #       --r-scale=511 --t-partner=0.01 --k 0 tests/ld/data/test-panel/store-k0
 #
 # It was written to a scratch directory and copied here, the out path being the only difference;
