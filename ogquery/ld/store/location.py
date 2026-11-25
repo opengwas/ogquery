@@ -2,7 +2,7 @@
 
 A store is a local path or an HTTP(S) URL, opened as one Zarr hierarchy. A reader and
 validation open it the same way, so a store served from a static host that honours byte
-ranges reads exactly as it does from disk. The open is `ogquery.arrays.open_group`'s, the one
+ranges reads exactly as it does from disk. The open is `ogquery.opening.open_group`'s, the one
 every Store's group is opened by: zarr opens a URL through fsspec's HTTP filesystem (aiohttp),
 which the `http` extra installs, and without it the open names `ogquery[http]`. Nothing here
 lists a directory: every node is found by its own metadata document, which a static host
@@ -47,7 +47,7 @@ from zarr.core.buffer import Buffer, BufferPrototype, default_buffer_prototype
 from zarr.core.sync import sync
 from zarr.storage import LocalStore, StorePath, WrapperStore
 
-from ogquery import arrays
+from ogquery import opening
 from ogquery.ld.format import InputError, Provenance
 from ogquery.ld.format.geometry import spans
 from ogquery.ld.store import layout
@@ -83,10 +83,10 @@ def open_group(location: str | os.PathLike[str], *, cache: ChunkCache | None = N
 
 
 def _opened(location: str | os.PathLike[str]) -> zarr.Group:
-    """`ogquery.arrays.open_group` of `location`, its failures named. A URL without the `http`
-    extra raises `ogquery.arrays.HttpExtraMissing`, naming the extra, as it is."""
+    """`ogquery.opening.open_group` of `location`, its failures named. A URL without the `http`
+    extra raises `ogquery.opening.HttpExtraMissing`, naming the extra, as it is."""
     try:
-        group: zarr.Group = arrays.open_group(location)
+        group: zarr.Group = opening.open_group(location)
         return group
     except FileNotFoundError as missing:
         raise InputError(f"no LD Store at {location}: there is no Zarr group there") from missing

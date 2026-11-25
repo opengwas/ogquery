@@ -26,7 +26,7 @@ def first_analysis_rows(path: Path) -> int:
 def ld_answers(location: str, alids: list[str]) -> tuple[int, int, bool]:
     """The LD read path, as opengwasdb and ogdb-api call it (ogquery#2)."""
     import ogquery.ld
-    from ogquery.arrays import HttpExtraMissing
+    from ogquery.opening import HttpExtraMissing
 
     try:
         store = ogquery.ld.open(location)

@@ -68,8 +68,14 @@ def _loaded_after(statements: str) -> list[str]:
 BASELINE = "import numcodecs, numpy, zarr"
 
 
+#: The one allowance, an accepted exception to the import boundary (ADR 0002): with the `http`
+#: extra installed, zarr's own import loads fsspec, whatever imports zarr, so a local LD query
+#: loads it too. ogquery adds nothing to it; without the extra it is not there to load.
+ALLOWED_IN_THE_BASELINE = frozenset({"fsspec"})
+
+
 def test_the_baseline_loads_no_build_code_and_at_most_fsspec() -> None:
-    assert set(_loaded_after(BASELINE)) <= {"fsspec"}
+    assert set(_loaded_after(BASELINE)) <= ALLOWED_IN_THE_BASELINE
 
 
 def test_asking_every_ld_question_loads_no_build_code_and_no_heavy_dependency() -> None:

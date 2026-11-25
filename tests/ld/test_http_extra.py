@@ -2,7 +2,7 @@
 
 zarr opens an http(s) URL through fsspec's HTTP filesystem, which runs on aiohttp. Neither is
 one of ogquery's three dependencies, so `pip install ogquery` reads local Stores only, and
-`ogquery.arrays.open_group` -- the one open every Store goes through -- checks for both before
+`ogquery.opening.open_group` -- the one open every Store goes through -- checks for both before
 zarr is asked, raising `HttpExtraMissing` naming `ogquery[http]`. These tests block the two
 imports in a fresh interpreter, so they hold with the extra installed or not.
 """
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from ogquery import arrays
+from ogquery import opening
 
 TEST_STORE = Path(__file__).resolve().parent / "data" / "test-panel" / "store"
 
@@ -38,7 +38,7 @@ def _without(blocked: tuple[str, ...], statements: str) -> dict[str, object]:
 
 OPEN_A_URL = (
     "import ogquery.ld\n"
-    "from ogquery.arrays import HttpExtraMissing\n"
+    "from ogquery.opening import HttpExtraMissing\n"
     "try:\n"
     "    ogquery.ld.open('http://127.0.0.1:9/store/')\n"
     "    out = {'raised': None}\n"
@@ -95,10 +95,10 @@ def test_a_local_store_reads_without_the_extra() -> None:
 )
 def test_a_location_s_scheme(location: str, scheme: str | None) -> None:
     # A Windows drive is a path, not a one-letter scheme.
-    assert arrays._scheme(location) == scheme
+    assert opening._scheme(location) == scheme
 
 
 @pytest.mark.parametrize("location", ["s3://bucket/store", "file:///data/store"])
 def test_a_url_of_another_scheme_is_refused_not_read_as_a_path(location: str) -> None:
     with pytest.raises(ValueError, match=r"local path or an http\(s\) URL, not a \w+:// URL"):
-        arrays.open_group(location)
+        opening.open_group(location)
