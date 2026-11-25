@@ -526,15 +526,39 @@ def test_an_r_array_whose_lost_chunk_would_read_as_a_number_is_refused(tmp_path:
     meta = copy / "near" / "22" / "r" / "zarr.json"
     text = meta.read_text(encoding="utf-8")
     meta.write_text(text.replace('"fill_value": -32768', '"fill_value": 0'), encoding="utf-8")
-    # A region whose r is read: one with no variant reads none, and answers 0 × 0 (ogquery#2).
-    assert ogquery.ld.open(copy).count_in("22", 29_000_000, 31_000_000) > 1
     with pytest.raises(ValueError, match=r"near/22/r has the fill value 0, which valid data"):
-        ogquery.ld.open(copy).region("22", 30_000_000, 1_000_000)
-    assert ogquery.ld.open(copy).region("22", 30_000_000, 100_000).r.shape == (0, 0)
+        ogquery.ld.open(copy).region("22", 30_000_000, 100_000)
     chr21 = StoreReader.open(copy).variants(np.array([100])).position[0]
     assert ogquery.ld.open(copy).region("21", int(chr21), 1_000_000).r.size > 1, (
         "chr21 is intact"
     )
+
+
+@pytest.mark.parametrize(
+    ("chrom", "centre", "radius"), [("22", 1_000, 100), ("22", 30_000_000, 100_000)]
+)
+def test_a_region_with_no_variant_refuses_a_chromosome_whose_near_band_is_gone(
+    tmp_path: Path, chrom: str, centre: int, radius: int
+) -> None:
+    # A region opens its chromosome's Near Band before it decides the window holds no variant,
+    # as opengwasdb c8ebe4ca did: a broken store refuses, with its text, rather than answer 0 × 0
+    # (ogquery#2, review round 2). The variant-only reads open none of it (test_public_reads.py).
+    copy = copy_store(tmp_path / "store")
+    shutil.rmtree(copy / "near" / "22")
+    store = ogquery.ld.open(copy)
+    assert store.count_in(chrom, centre - radius, centre + radius) == 0, "a window with no variant"
+    with pytest.raises(ValueError, match=r"near/22/indptr is missing: every LD Store holds it"):
+        store.region(chrom, centre, radius)
+    # Another chromosome's region is its own: chr21's Near Band is whole, so it answers.
+    assert store.region("21", 1, 0).r.shape == (0, 0)
+
+
+def test_an_empty_region_refuses_where_its_own_near_band_metadata_is_gone(tmp_path: Path) -> None:
+    copy = copy_store(tmp_path / "store")
+    for metadata in (copy / "near").rglob("zarr.json"):
+        metadata.unlink()
+    with pytest.raises(ValueError, match=r"near/21/indptr is missing: every LD Store holds it"):
+        ogquery.ld.open(copy).region("21", 1, 0)
 
 
 async def reached(event: threading.Event) -> None:

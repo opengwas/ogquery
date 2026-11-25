@@ -342,11 +342,21 @@ class StoreReader(ComponentWorkers):
 
         The variant table's answer, and nothing of the LD components: `variants_in`, `count_in`
         and `has` read it before any r, so a store's Near Band, Far Pairs and Partner Rows are
-        never opened for it (ogld#79; ogquery#2). `region` opens its chromosome's Near Band when
-        it reads the region's r (`region_r`), and judges each array's fill value there, before
-        any code is decoded (ld-store §6), as `loci_of` leaves them to the reads that need them
-        (opengwas/ogld#71).
+        never opened for it (ogld#79; ogquery#2). `region` asks `region_rows` instead.
         """
+        return self._variant_table.rows_in(chrom, start, stop)
+
+    def region_rows(self, chrom: str, start: int, stop: int) -> npt.NDArray[np.int64]:
+        """`rows_in`'s rows for the region `region` reads, its chromosome opened first.
+
+        This is the reader's first touch of a chromosome that `region` reads from its Near Band,
+        so each of its arrays' fill values is judged before any element is decoded (ld-store §6),
+        and a store whose Near Band is broken refuses even a region that holds no variant, as
+        opengwasdb `c8ebe4ca`'s `rows_in` refused it. `loci_of` and the variant-only reads open
+        none of them (opengwas/ogld#71; ogquery#2).
+        """
+        if chrom in self._ranges:
+            self._chromosome(chrom)
         return self._variant_table.rows_in(chrom, start, stop)
 
     def chromosome_range(self, chrom: str) -> tuple[int, int]:

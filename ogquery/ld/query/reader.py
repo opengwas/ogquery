@@ -49,7 +49,15 @@ class Reader(Protocol):
 
     def rows_of(self, alids: Sequence[str]) -> npt.NDArray[np.int64]: ...
 
-    def rows_in(self, chrom: str, start: int, stop: int) -> npt.NDArray[np.int64]: ...
+    def rows_in(self, chrom: str, start: int, stop: int) -> npt.NDArray[np.int64]:
+        """The rows on `chrom` in [start, stop], from the variant table alone: what `variants_in`,
+        `count_in` and `has` read, opening no LD component."""
+        ...
+
+    def region_rows(self, chrom: str, start: int, stop: int) -> npt.NDArray[np.int64]:
+        """`rows_in`'s rows, for `region`: a reader opens here what its region read needs, and
+        refuses what it cannot read, before deciding a region holds no variant (ogquery#2)."""
+        ...
 
     def chromosome_range(self, chrom: str) -> tuple[int, int]: ...
 

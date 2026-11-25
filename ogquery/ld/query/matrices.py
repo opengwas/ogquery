@@ -36,7 +36,7 @@ def region(reader: Reader, chrom: str, centre: int, radius: int, *, fill: float 
     """The signed-r matrix of every variant with |position − centre| ≤ radius on `chrom`,
     in genomic order (ld-store §8; ogld#4). Refused unless 2 × radius ≤ far_bp."""
     judge_region(radius=radius, far_bp=reader.provenance["far_bp"]).raise_if_refused()
-    rows = reader.rows_in(normalise_chromosome(chrom), centre - radius, centre + radius)
+    rows = reader.region_rows(normalise_chromosome(chrom), centre - radius, centre + radius)
     # The region's rows are contiguous, so the reader reads each one as one slice (ogld#14).
     start, stop = (int(rows[0]), int(rows[-1]) + 1) if len(rows) else (0, 0)
     return _ld_matrix(reader, rows, reader.region_r(start, stop), (), fill)

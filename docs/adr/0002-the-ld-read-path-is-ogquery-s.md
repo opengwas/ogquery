@@ -121,10 +121,14 @@ stop)`, the Variant Set's variants in a range, read from the variant table befor
 `LDStore.count_in`, its length, from positions alone; and `LDStore.has(alids)`, one boolean per
 ALID, true exactly where the queries find it present. None of them opens a key of the Near Band,
 the Far Pairs, the Partner Rows or a Proxy Index, so a store whose LD components are damaged
-still answers them; `region` opens its chromosome's Near Band when it reads the region's r. Each runs inside the reader's `request()`
-as the queries do and normalises the chromosome as `region` does; `variants_in` judges no radius,
-since it reads no pair. A range whose start exceeds its stop is an `InputError`, never an empty
-answer. The component pool's size (`_query_workers`) stays private.
+still answers them: they read `Reader.rows_in`, the variant table's. `region` reads
+`Reader.region_rows` instead, which opens the chromosome's Near Band first, so a broken one
+refuses even a region with no variant in it, as opengwasdb `c8ebe4ca` refused it. Each runs
+inside the reader's `request()` as the queries do and normalises the chromosome as `region`
+does; `variants_in` judges no radius, since it reads no pair. A range whose start exceeds its
+stop is an `InputError`, never an empty answer. The component pool's size (`_query_workers`)
+stays private. `region_rows` is a member of the `Reader` protocol, so opengwasdb's Genotype
+Store reader implements it too, as its `rows_in`.
 
 **The LD Store format is unchanged.** `software.ogld` and the LD format version stay as they are.
 
