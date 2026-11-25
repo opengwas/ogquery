@@ -378,8 +378,7 @@ class ChunkCache:
         grouped: npt.NDArray[Any] = np.concatenate(
             [chunk[offsets[a:b]] for chunk, a, b in zip(chunks, starts, stops, strict=True)]
         )
-        found: npt.NDArray[Any] = np.empty_like(grouped)
-        found[order] = grouped
+        found: npt.NDArray[Any] = grouped[_inverse(order)]
         return found
 
     def _take_bounded(
@@ -392,13 +391,14 @@ class ChunkCache:
     ) -> npt.NDArray[Any]:
         order = np.argsort(which, kind="stable")
         ordered = which[order]
-        result = np.empty(len(at), dtype=array.dtype)
+        # Each batch is the next run of `order`, so the batches joined are `at[order]`'s elements.
+        parts: list[npt.NDArray[Any]] = []
         for start in range(0, len(wanted), most):
             numbers = wanted[start : start + most]
             a = np.searchsorted(ordered, numbers[0])
             b = np.searchsorted(ordered, numbers[-1], side="right")
-            asked = order[a:b]
-            result[asked] = self.take(array, at[asked])
+            parts.append(self.take(array, at[order[a:b]]))
+        result: npt.NDArray[Any] = np.concatenate(parts)[_inverse(order)]
         return result
 
     def runs(
@@ -556,6 +556,20 @@ class ChunkCache:
             _, (_, dropped) = self._kept.popitem(last=False)
             self._bytes -= dropped
         return chunk
+
+
+def _inverse(order: npt.NDArray[np.intp]) -> npt.NDArray[np.intp]:
+    """The permutation that undoes `order`: `grouped[_inverse(order)]` puts back in request order
+    the elements `grouped` holds in `order`'s.
+
+    A take, rather than a scatter into `np.empty_like(grouped)`: numpy 2.0 and 2.1 scatter a
+    string longer than 15 bytes, which StringDType keeps outside the array, into an empty string
+    array as an empty string (fixed in numpy 2.2), and numpy 2.0 is ogquery's floor. An empty ALID
+    is the fill value, so the read refused it rather than answer wrongly (ogquery#2).
+    """
+    inverse = np.empty_like(order)
+    inverse[order] = np.arange(len(order), dtype=order.dtype)
+    return inverse
 
 
 def elements_of(
