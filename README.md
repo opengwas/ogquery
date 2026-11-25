@@ -1,8 +1,8 @@
 # ogquery
 
-The light, read-only query package for OpenGWAS **GWAS Stores**. It is the
-**Store Reader**: the one read path that the OpenGWASDB builder and validator,
-the Data API (ogdb-api), opengwaspy and opengwasr all use.
+The light, read-only query package for OpenGWAS **GWAS Stores** and **LD
+Stores**. It is the **Store Reader**: the one read path that the OpenGWASDB
+builder and validator, the Data API (ogdb-api), opengwaspy and opengwasr all use.
 
 - **Dependencies:** numpy, zarr and numcodecs only. No pysam, no SQLite, no
   scipy or pandas, nothing to compile. It runs on Linux, macOS and Windows, on
@@ -22,10 +22,14 @@ it through opengwaspy.
 ## Install
 
 ```bash
-pip install ogquery
+pip install ogquery            # local Stores
+pip install 'ogquery[http]'    # and Stores served over HTTP(S)
 ```
 
 It installs numpy, zarr, numcodecs and their own dependencies, all as wheels.
+The `http` extra adds fsspec and aiohttp, which zarr reads a URL with; without
+it, opening an `http(s)://` Store raises `ogquery.arrays.HttpExtraMissing`,
+naming the extra.
 
 ## Open a release
 
@@ -55,16 +59,47 @@ rewritten with `ogdb rewrite-release` (opengwasdb); an earlier one must be
 **rebuilt from source**, since the rewrite accepts 0.2.3 alone. opengwasdb
 passes a reader for the table, `open_release(path, legacy=...)`, and reads both.
 
+## Query an LD Store
+
+An LD Store holds one ancestry's LD for clumping, proxies and LD matrices
+(opengwasdb builds them; `ogquery.ld` reads them, [ADR 0002](./docs/adr/0002-the-ld-read-path-is-ogquery-s.md)).
+
+```python
+import numpy as np
+import ogquery.ld
+
+with ogquery.ld.open("tests/ld/data/test-panel/store") as store:   # or an https:// URL
+    v = store.variants_in("22", 16_000_000, 17_000_000)  # Variants in a range; no r is read
+    n = store.count_in("22", 16_000_000, 17_000_000)     # how many, from positions alone
+    present = store.has(["22:16021005:C:G", "22:1:A:C"])  # [True, False]
+    m = store.matrix(v.alid.tolist())                     # LDMatrix: signed r, NaN unstored
+    r = store.region("22", 30_000_000, 1_000_000)         # radius ≤ far_bp / 2
+    p = store.proxies(["22:16021005:C:G"], r2=0.2, kb=3_000)       # Proxies
+    score = np.linspace(6, 1, len(v))                     # |z| or −log10 p, one per ALID
+    c = store.clump(v.alid.tolist(), score, r2=0.01, kb=3_000)     # Clumps, as plink2 --clump
+```
+
+A request the store cannot answer exactly raises `ogquery.ld.Refusal`, naming
+its reason (`RefusalReason`), and a malformed one `ogquery.ld.InputError`.
+Every unstored pair is NaN; only a caller's `fill` replaces it, and the result
+records the fill. `variants_in`, `count_in` and `has` read the variant table
+alone, so a caller can size a region or check membership before any r is
+read; `has` is true exactly where the queries find an ALID present, and an
+indel spelt reference first is refused (`ogquery.alid.ReferenceFirstIndel`), as
+the queries refuse it. A Genotype Store is opengwasdb's to read
+(`opengwasdb.ld.open`); `ogquery.ld.open` refuses one, naming it.
+
 ## Develop
 
 ```bash
-pixi run -e test test              # the whole suite
+pixi run -e test test              # the whole suite, with the `http` extra
+pixi run -e test-nohttp test -m "not http"   # and without it
 pixi run -e test contract          # the contract bundle alone
 pixi run -e dev lint               # ruff; `typecheck` is mypy --strict
 pixi run -e dev contract-check     # tests/contract is opengwasdb's bundle
 ```
 
-Or, without pixi: `pip install -e ".[test]"` and `pytest`.
+Or, without pixi: `pip install -e ".[test,http]"` and `pytest`.
 
 [CONTRIBUTING.md](./CONTRIBUTING.md) is how to contribute,
 [AGENTS.md](./AGENTS.md) how work moves, [CONTEXT.md](./CONTEXT.md) the
@@ -115,6 +150,13 @@ is opengwasdb's, at
 [`c542111c`](https://github.com/opengwas/opengwasdb/commit/c542111c74699a934b5ae5ae9163cce69b814570), the
 commit before #464's first. A bare issue number (`#464`) or ADR number in code
 that came from opengwasdb is opengwasdb's.
+
+The LD read path came from opengwasdb
+[`c8ebe4ca`](https://github.com/opengwas/opengwasdb/commit/c8ebe4ca2e7697f3b723fd89ebb645bb1d221fd4)
+as a plain copy, split from its build code by name, so its history there is
+opengwasdb's ([ADR 0002](./docs/adr/0002-the-ld-read-path-is-ogquery-s.md)):
+`opengwasdb/ld/{format,store,query}/` is `ogquery/ld/{format,store,query}/`,
+and its tests and their data are `tests/ld/`.
 
 ## Licence
 
