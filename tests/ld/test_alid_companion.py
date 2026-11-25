@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 import zarr
 from store_copies import copy_store
-from support import alids, panel_data, passing_rows
+from support import TEST_STORE_K0, alids, panel_data, passing_rows
 
 import ogquery.ld
 from ogquery.ld.store import layout
@@ -92,3 +92,33 @@ def test_a_companion_written_with_slashes_is_read_where_paths_use_backslashes(
     found = store.has(asked())
     assert store._reader._variant_table._alid_mmap is not None, "the companion answered"
     assert found.any()
+
+
+def test_a_companion_is_read_where_a_path_s_stat_and_a_handle_s_differ(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # On Windows with Python 3.14 (CI run 45664832290), a valid companion was refused "changed
+    # before mapping": its payloads' identity was recorded from a path's stat and compared with
+    # the opened file's fstat, and there the two disagree. Here a path's stat reports another
+    # ctime; the reader records and compares descriptors' identities alone (opengwas/ogquery#2).
+    real = pathlib.Path.stat
+
+    class Shifted:
+        def __init__(self, stat: object) -> None:
+            self._stat = stat
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._stat, name)
+
+        @property
+        def st_ctime_ns(self) -> int:
+            return int(self._stat.st_ctime_ns) + 1  # type: ignore[attr-defined]
+
+    def path_stat(self: Path, *args: object, **kwargs: object) -> object:
+        found = real(self, *args, **kwargs)  # type: ignore[arg-type]
+        return Shifted(found) if self.parent.parent.name == "alid_mmap" else found
+
+    monkeypatch.setattr(pathlib.Path, "stat", path_stat)
+    store = ogquery.ld.open(TEST_STORE_K0)
+    assert store.has(asked()).any()
+    assert store._reader._variant_table._alid_mmap is not None, "the companion answered"

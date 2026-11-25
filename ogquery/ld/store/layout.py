@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -407,9 +408,15 @@ def _alid_companion(path: Path, pointer: Any) -> AlidCompanion:
     identities = []
     for descriptor in ALID_MMAP_PAYLOADS:
         payload = directory / descriptor.name
-        stat = payload.stat()
+        # The identity is the opened file's, as `_MappedAlids` compares it when it maps the file:
+        # a path's stat and a descriptor's can disagree, as on Windows with Python 3.14, which
+        # refused every valid companion "changed before mapping" (opengwas/ogquery#2). The hash
+        # is read through the same descriptor.
+        with payload.open("rb") as stream:
+            stat = os.fstat(stream.fileno())
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
         size = count * descriptor.width * descriptor.dtype.itemsize
-        if stat.st_size != size or file_sha256(payload) != manifest["payloads"][descriptor.name]:
+        if stat.st_size != size or digest != manifest["payloads"][descriptor.name]:
             raise ValueError(f"{payload}: length or content hash differs")
         identities.append((descriptor.name, file_identity(stat)))
     return AlidCompanion(directory, count, tuple(identities))
