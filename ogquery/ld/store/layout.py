@@ -191,13 +191,15 @@ def local_root(store_path: StorePath) -> Path:
     §5.1).
 
     A reader's store is wrapped by the cache (`location._KeptIndexes`), so the wrapper is seen
-    through: the file is the same one, and a local frame is read from it with `os.pread` (§7).
+    through: the file is the same one, and a local frame is read from it at an offset (§7). Its
+    one caller, `location.frame_source` by way of `chunk_file`, takes the refusal to mean "read
+    the frames as the store's byte ranges" (`RangeSource`).
     """
     store = _unwrapped(store_path.store)
     if not isinstance(store, LocalStore):
         raise ValueError(
-            f"the Partner Rows are written to a local directory, and {type(store).__name__} is "
-            "not one (partner-rows §5.1)"
+            f"{type(store).__name__} is not a local directory, so a chunk file has no path to "
+            "read at an offset: its frames are read as byte ranges of the store (partner-rows §7)"
         )
     return Path(store.root)
 
