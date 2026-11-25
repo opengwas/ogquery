@@ -19,9 +19,10 @@ import pathlib
 import numpy as np
 import pytest
 import testdata as td
+from store_copies import t_far
 
 HALF_STEP = 1 / 65534  # half of one int16 step: the quantisation tolerance (ld-store.md §3)
-T_FAR_K10 = 20.84 / (771 - 10 - 1)  # t_far for 771 samples at k = 10 (ADR 0087, decision 3)
+T_FAR_K10 = t_far(771, 10)  # t_far for 771 samples at k = 10 (ADR 0087, decision 3)
 SCALE = 32767
 
 # Literals from tests/ld/data/test-panel/README.md, "The edge cases, and where they are".

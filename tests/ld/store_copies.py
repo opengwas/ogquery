@@ -32,6 +32,8 @@ def t_far(n: int, k: int) -> float:
     reader never computes t_far, it reads the one a store records, so the formula is opengwasdb's
     build code's, and a test holds the record to this (ogquery#2)."""
     return max(0.001, 20.84 / (n - k - 1))
+
+
 #: The Test Store's encoding, r̂ = code / R_SCALE, as a literal: every test that needs the Test
 #: Store's step, or builds the Test Panel to compare with it, takes it from here, never from
 #: ogld (ld-store §3; ADR 0090). A test holds the store's record to it.
