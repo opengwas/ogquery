@@ -5,8 +5,10 @@ name: CI
 #   tests              the contract bundle (at its cross-machine tolerance), the
 #                      import-boundary test and the unit tests, on Linux, macOS and
 #                      Windows, each on the lowest and highest Python supported;
-#   lint               ruff and mypy;
-#   distributions      the source archive and the wheel, built as a release builds them;
+#   floors             the same tests at the lowest numpy, zarr and numcodecs allowed;
+#   lint               ruff, and mypy --strict on ogquery/ and scripts/;
+#   distributions      the source archive and the wheel, built as a release builds them,
+#                      and a strict-mypy caller of the installed wheel (py.typed);
 #   installed wheel    that wheel in a clean venv on each operating system: only numpy,
 #                      zarr, numcodecs and their dependencies install, all as wheels,
 #                      and the installed package answers a bundle release;
@@ -78,6 +80,36 @@ jobs:
       - name: The unit and tooling tests
         run: python -m pytest tests/unit tests/tooling
 
+  # The floors pyproject.toml declares, installed together (.github/floors.txt), so each
+  # is one the Store Reader was tested on. Python 3.12 only: numpy 2.0 has no wheel for
+  # 3.14, and the floor of the Python range is the one a floor user has.
+  floors:
+    name: tests at the dependency floors
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONNOUSERSITE: "1"
+      OPENBLAS_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ogquery at its floors
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --only-binary=:all: -c .github/floors.txt -e ".[test]"
+          python -m pip check
+          python -c "import numpy, zarr, numcodecs; print(numpy.__version__, zarr.__version__, numcodecs.__version__)"
+
+      - name: The contract, the import boundary and the unit tests
+        run: python -m pytest tests/contract tests/unit
+
   lint:
     name: lint and typecheck
     runs-on: ubuntu-latest
@@ -101,7 +133,7 @@ jobs:
         run: ruff check .
 
       - name: mypy
-        run: mypy ogquery
+        run: mypy ogquery scripts
 
   # What a `pip install ogquery` user gets, built the way a release builds it: the
   # source archive first, then the wheel from that archive, so a file the archive
@@ -130,6 +162,18 @@ jobs:
 
       - name: The archives hold what the repository says they hold
         run: python scripts/check_distributions.py dist
+
+      # opengwasdb type-checks its callers strictly (#475): the installed wheel must carry
+      # py.typed, or mypy refuses `import ogquery` as untyped. Checked from outside the
+      # checkout, so mypy sees only the installed package.
+      - name: A strict-mypy caller of the installed wheel type-checks
+        run: |
+          python -m venv "$RUNNER_TEMP/typing"
+          "$RUNNER_TEMP/typing/bin/python" -m pip install dist/*.whl "mypy>=1.10"
+          mkdir "$RUNNER_TEMP/typing-run"
+          cp tests/typing/consumer.py "$RUNNER_TEMP/typing-run/"
+          cd "$RUNNER_TEMP/typing-run"
+          "$RUNNER_TEMP/typing/bin/python" -m mypy --strict consumer.py
 
       - uses: actions/upload-artifact@v4
         with:
