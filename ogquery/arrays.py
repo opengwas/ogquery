@@ -10,7 +10,9 @@ written without them. ADR 0056 records why each is set; its 23 Nov 2026 note
 records that the configuration moved here from `opengwasdb/store/arrays.py`
 with the read-only open (#464).
 
-`open_group` is the one read-only open of a Store's Zarr group. Every write --
+`open_group` is the one read-only open of a Store's Zarr group, a GWAS Store
+Release's or an LD Store's (`ogquery.ld`), from local disk or, for an http(s)
+URL, through fsspec and aiohttp, which the `http` extra installs. Every write --
 an array or group created, a group opened in any other mode -- goes through
 `opengwasdb.store.arrays`, which also guards writes against consolidated
 metadata (ADR 0056 §4); a read cannot change a release, so it needs no guard.
@@ -19,8 +21,11 @@ metadata (ADR 0056 §4); a read cannot change a release, so it needs no guard.
 from __future__ import annotations
 
 import importlib
+import importlib.util
+import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
+from urllib.parse import urlsplit
 
 import numcodecs
 import zarr
@@ -158,13 +163,64 @@ def inner_chunk_of(array: Any) -> tuple[int, ...]:
     return tuple(int(size) for size in array.chunks)
 
 
-def open_group(path: str | Path) -> Any:
-    """Open a Store Release's Zarr group read-only.
+#: The schemes `open_group` reads over the network, and what reading them imports: zarr
+#: opens an http(s) URL through fsspec's HTTP filesystem, which is async and runs on aiohttp.
+HTTP_SCHEMES: Final = ("http", "https")
+HTTP_MODULES: Final = ("fsspec", "aiohttp")
+#: What installs `HTTP_MODULES` (pyproject.toml's `http` extra).
+HTTP_EXTRA: Final = "ogquery[http]"
+
+
+class HttpExtraMissing(ImportError):
+    """An http(s) location, with the `http` extra not installed: the error names the extra,
+    rather than leaving zarr to fail on whichever module it imports first."""
+
+
+def open_group(path: str | os.PathLike[str]) -> Any:
+    """Open a Store's Zarr group read-only: a local path, or an http(s) URL.
 
     The one place a reader calls `zarr.open_group`. The stored metadata decides
     the Zarr format, so a 0.1.0 (Zarr v2) release opens as a 0.2.x (v3) one
     does. Every write -- and every other open mode -- goes through
     `opengwasdb.store.arrays` (`open_group`, `open_group_for_write`).
+
+    A local path opens on zarr's `LocalStore`. An http(s) URL opens as zarr opens
+    one, through fsspec and aiohttp, which only the `http` extra installs: without
+    them this raises `HttpExtraMissing`, naming `ogquery[http]`, before zarr is
+    asked. Any other URL scheme is a `ValueError`: no reader here reads it, and
+    read as a local path it would name a directory that is not there.
     """
-    store: LocalStore = zarr_sync(LocalStore.open(root=Path(path), mode="r", read_only=True))
+    location = os.fspath(path)
+    scheme = _scheme(location)
+    if scheme in HTTP_SCHEMES:
+        require_http(location)
+        return zarr.open_group(location, mode="r")
+    if scheme is not None:
+        raise ValueError(
+            f"{location}: a Store is opened from a local path or an http(s) URL, not a "
+            f"{scheme}:// URL"
+        )
+    store: LocalStore = zarr_sync(LocalStore.open(root=Path(location), mode="r", read_only=True))
     return zarr.open_group(store, mode="r", zarr_format=None)
+
+
+def require_http(location: str) -> None:
+    """Raise `HttpExtraMissing`, naming the extra and the modules it lacks, unless fsspec and
+    aiohttp are both installed. They are found, not imported: zarr imports them, and ogquery
+    imports nothing outside its three dependencies itself."""
+    missing = [name for name in HTTP_MODULES if importlib.util.find_spec(name) is None]
+    if missing:
+        raise HttpExtraMissing(
+            f"{location} is an http(s) URL, and reading one needs {' and '.join(HTTP_MODULES)}, "
+            f"which ogquery installs only with its `http` extra: pip install '{HTTP_EXTRA}' "
+            f"(not importable: {', '.join(missing)})"
+        )
+
+
+def _scheme(location: str) -> str | None:
+    """The URL scheme of `location`, lower-cased, or None for a local path. A Windows drive
+    (`C:\\` or `C:/`) is a path: a scheme is at least two letters and is followed by `//`."""
+    parts = urlsplit(location)
+    if len(parts.scheme) < 2 or not location[len(parts.scheme) + 1 :].startswith("//"):
+        return None
+    return parts.scheme.lower()

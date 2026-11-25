@@ -1,0 +1,79 @@
+# Where the LD Test Panel, its Test Store and their loader come from. opengwasdb builds and
+# regenerates them (its scripts/ld/make_test_panel.py and make_test_store.py); ogquery holds a
+# copy, read only, as it holds tests/contract. Each `file` line is one file of that commit, byte
+# for byte, at the same path in both repositories: its git blob id there, and its path.
+# tests/ld/test_source.py holds every file listed to its blob id, and every file under
+# tests/ld/data/ to a line. opengwasdb's Test Panel also holds the genotypes, PC File and dosages
+# (panel.pgen, .psam, .keep, pcs.eigenvec, dosages.raw); its build tests read them, these do not.
+# Refresh by copying the same paths from a later opengwasdb commit and rewriting the lines from
+# `git ls-tree -r <commit> tests/ld/data tests/ld/testdata.py` there.
+repository https://github.com/opengwas/opengwasdb.git
+commit c8ebe4ca2e7697f3b723fd89ebb645bb1d221fd4
+file 6c50da452fdd21ba62a66e3de0641f773cb89b3f tests/ld/data/identity/chromosomes.tsv
+file c51a8038da3131c20b6f083d556ad8322cd926b4 tests/ld/data/identity/orient.tsv
+file 18bd5e9b33ee9257612e431e1d85546b6644f23f tests/ld/data/identity/README.md
+file fac65521f71855f64c4501e9546d79c5f6008eb8 tests/ld/data/identity/reversed.tsv
+file 4a8b358bfeec4366f0fde52d6c25e6a0ba55acbb tests/ld/data/test-panel/gwas/z.tsv
+file 253b8dbbddaa379d7961b0f0b8017c8781b90b9a tests/ld/data/test-panel/manifest.json
+file c178089019e85037c737dbdc50075fbaa4b52560 tests/ld/data/test-panel/panel.pvar
+file df5f49d881e18088f5ed9b12ddd64afa0276df29 tests/ld/data/test-panel/plink2/clump_r2_0.001.clumps
+file 075931ccec52867b411e520db05210306b27ecdd tests/ld/data/test-panel/plink2/clump_r2_0.01.clumps
+file 9152f5383f034f9a9923ac38b4f48a1776bfe356 tests/ld/data/test-panel/plink2/r_unphased_k0.npz
+file 51273e275066ef55c6f944ffb1a0b343ff08789f tests/ld/data/test-panel/README.md
+file 3c48d7c0bb2583173b17cae4fe2e77a424e5c597 tests/ld/data/test-panel/reference/r.npz
+file c2ecdd4ea8e6831f065c0fb1bcffdeaaf3844e7a tests/ld/data/test-panel/store/far/21/indptr/c/0
+file 7bbf4d4296ab8a735eb40a0bea6e253c89eb69bd tests/ld/data/test-panel/store/far/21/indptr/zarr.json
+file e886bd49efa6da7c8848fbdfa1b864325234e377 tests/ld/data/test-panel/store/far/21/partner/c/0
+file 2ee93d079d15852190ce5e33be8ad9b75636971f tests/ld/data/test-panel/store/far/21/partner/zarr.json
+file f4a1c542be489cda9adb6782d000db366e08ef3d tests/ld/data/test-panel/store/far/21/r/c/0
+file 105cadac8360710dde0286830b9c593d0734264b tests/ld/data/test-panel/store/far/21/r/zarr.json
+file d1f97dad6908138d519b0ef7143d6806e8ab27c6 tests/ld/data/test-panel/store/far/21/zarr.json
+file 25df168c77216a1cb58471e7a217589c78f93e81 tests/ld/data/test-panel/store/far/22/indptr/c/0
+file 0d2014d1c068e8e9d8fb020bb0775b877a038888 tests/ld/data/test-panel/store/far/22/indptr/zarr.json
+file 96a413249671845accc450a67092dd0b38edf2d8 tests/ld/data/test-panel/store/far/22/partner/c/0
+file 6e4dba51fbbe2e9f7ff61513bbcae6c41edaebdf tests/ld/data/test-panel/store/far/22/partner/zarr.json
+file a84ec48df333b2cd05f738c4db59ad08cffaa990 tests/ld/data/test-panel/store/far/22/r/c/0
+file 275e1f1c7e1860de1bd6eeace768aa5d52d8cccb tests/ld/data/test-panel/store/far/22/r/zarr.json
+file d1f97dad6908138d519b0ef7143d6806e8ab27c6 tests/ld/data/test-panel/store/far/22/zarr.json
+file d1f97dad6908138d519b0ef7143d6806e8ab27c6 tests/ld/data/test-panel/store/far/zarr.json
+file 2dd0d7aff433f167361834c638e9bf700daaa8df tests/ld/data/test-panel/store/near/21/indptr/c/0
+file 7bbf4d4296ab8a735eb40a0bea6e253c89eb69bd tests/ld/data/test-panel/store/near/21/indptr/zarr.json
+file cec57eadbbd62e6928d9d50142013143468b8573 tests/ld/data/test-panel/store/near/21/r/c/0
+file 80c6b965e7400f9906cf0519a31bd0371f31f767 tests/ld/data/test-panel/store/near/21/r/zarr.json
+file d1f97dad6908138d519b0ef7143d6806e8ab27c6 tests/ld/data/test-panel/store/near/21/zarr.json
+file f7bf6b22af067ff71928ee8dd6fe924e9fb30845 tests/ld/data/test-panel/store/near/22/indptr/c/0
+file 0d2014d1c068e8e9d8fb020bb0775b877a038888 tests/ld/data/test-panel/store/near/22/indptr/zarr.json
+file b719480d0c5fee993054c02a257b6311a90dcb1a tests/ld/data/test-panel/store/near/22/r/c/0
+file 790c8e91e59980b27409ac14bd12327c51f10445 tests/ld/data/test-panel/store/near/22/r/zarr.json
+file d1f97dad6908138d519b0ef7143d6806e8ab27c6 tests/ld/data/test-panel/store/near/22/zarr.json
+file d1f97dad6908138d519b0ef7143d6806e8ab27c6 tests/ld/data/test-panel/store/near/zarr.json
+file f01bf495818a137265ab5da91c9984331429fe1d tests/ld/data/test-panel/store/partners/21/frames/c/0
+file 7cf0649f4fcc26e64be4f062209976a647cff1ab tests/ld/data/test-panel/store/partners/21/frames_idx/c/0
+file 9c3e623c560a43e12e54c585dad9154ff05e68d2 tests/ld/data/test-panel/store/partners/21/frames_idx/zarr.json
+file 1e88d3cfc863798c0ebf82183a795c3e15518223 tests/ld/data/test-panel/store/partners/21/frames/zarr.json
+file c2dd71c3f07968b048fe0bfff964f5b1b1d2426c tests/ld/data/test-panel/store/partners/21/zarr.json
+file a701ce3bcb262cbc0b0967eb41b26260c6c5d221 tests/ld/data/test-panel/store/partners/22/frames/c/0
+file 906e1628658fa1a98085624c1afecccc607f12df tests/ld/data/test-panel/store/partners/22/frames_idx/c/0
+file 2fd78fbded088377b054eecb652949ecb09089c4 tests/ld/data/test-panel/store/partners/22/frames_idx/zarr.json
+file 2c8e27b55d73628ddf4d777d97f12d6ce477fee9 tests/ld/data/test-panel/store/partners/22/frames/zarr.json
+file ab783a804d3be719e74bc82a8b50862155d7694f tests/ld/data/test-panel/store/partners/22/zarr.json
+file d1f97dad6908138d519b0ef7143d6806e8ab27c6 tests/ld/data/test-panel/store/partners/zarr.json
+file 8053411c3f2f4d983b3f1e4ee0d5b069747b3c99 tests/ld/data/test-panel/store/variants/a1/c/0
+file 97a665d82aedcf1ee1506719b5b9366b4f1e5c60 tests/ld/data/test-panel/store/variants/a1_frequency/c/0
+file 857b4ff02b4fe7340a984877d706cf2203516a45 tests/ld/data/test-panel/store/variants/a1_frequency/zarr.json
+file f394c09394276fa3f0a3a5d0683177cd9884cf1d tests/ld/data/test-panel/store/variants/a1/zarr.json
+file 10f588f309347699e8fba06f5b2e1693112a2f19 tests/ld/data/test-panel/store/variants/a2/c/0
+file f394c09394276fa3f0a3a5d0683177cd9884cf1d tests/ld/data/test-panel/store/variants/a2/zarr.json
+file 747e31167264d4a40a18af334b81adf190ebd971 tests/ld/data/test-panel/store/variants/alid/c/0
+file b1a086c7fb8a4901447ee404d791ebc1a3fffada tests/ld/data/test-panel/store/variants/alid_index/alid/c/0
+file 3d44c4cd31e93b78978949a43f87073be2306b88 tests/ld/data/test-panel/store/variants/alid_index/alid/zarr.json
+file bcd40cdc7896525922246f6638c46cdf43b51ce6 tests/ld/data/test-panel/store/variants/alid_index/row/c/0
+file f34cfd46366e7ac5f744999f6a4c13c2f054d865 tests/ld/data/test-panel/store/variants/alid_index/row/zarr.json
+file d1f97dad6908138d519b0ef7143d6806e8ab27c6 tests/ld/data/test-panel/store/variants/alid_index/zarr.json
+file f394c09394276fa3f0a3a5d0683177cd9884cf1d tests/ld/data/test-panel/store/variants/alid/zarr.json
+file 5d79065f71f6f6f1a40aa022fe921950c4dff827 tests/ld/data/test-panel/store/variants/position/c/0
+file b68897776dace6af78ea17cce289339c38899207 tests/ld/data/test-panel/store/variants/position/zarr.json
+file f67741aaddd8af91cfad9e981319a3f1ef26fc9e tests/ld/data/test-panel/store/variants/zarr.json
+file dd3f48734512595c600bec128950753be6ccd33b tests/ld/data/test-panel/store/zarr.json
+file 8c8a09e39437cc9ce5ab167ce2c612c681327450 tests/ld/data/test-panel/variants.tsv
+file 758004ba3319ded3728c15ba9bba968683ef50cc tests/ld/testdata.py

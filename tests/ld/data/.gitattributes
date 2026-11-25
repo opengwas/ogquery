@@ -1,0 +1,3 @@
+# The LD Test Panel and its Test Store are opengwasdb's bytes (data/SOURCE): no line-ending
+# conversion in any checkout, so manifest.json's SHA-256s hold on Windows too.
+* -text

@@ -51,8 +51,16 @@ dependencies = [
 # Store Reader's own statistics are checked against (tests/unit/test_store_reader_stats.py);
 # the package never imports it, and the import-boundary tests run with it
 # installed, so a stray `import scipy` would be seen rather than fail to import.
-test = ["pytest>=8", "scipy>=1.11"]
-dev = ["ogquery[test]", "ruff>=0.6", "mypy>=1.10"]
+#
+# hypothesis drives the LD format's property tests (tests/ld), which came from opengwasdb.
+test = ["pytest>=8", "scipy>=1.11", "hypothesis>=6"]
+# Reading a Store over HTTP(S) (`ogquery.ld.open("https://…")`): zarr opens a URL through
+# fsspec's HTTP filesystem, which is async and runs on aiohttp. Neither is a core dependency;
+# without them an http(s) open raises `ogquery.arrays.HttpExtraMissing`, naming this extra.
+# The floors are opengwasdb's (its pyproject.toml at c8ebe4ca), which read LD Stores over
+# HTTP with them.
+http = ["fsspec>=2024.12", "aiohttp>=3.10"]
+dev = ["ogquery[test,http]", "ruff>=0.6", "mypy>=1.10"]
 
 [project.urls]
 Homepage = "https://github.com/opengwas/ogquery"
@@ -87,9 +95,13 @@ describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--abbrev=
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--strict-markers", "--import-mode=importlib"]
+markers = [
+  "http: reads an LD Store over HTTP from a locally served copy; needs the `http` extra",
+]
 # Each test directory imports its own helpers (`contract_reader`, the unit tests'
 # siblings) by name, as opengwasdb's suite does.
 pythonpath = ["tests/contract", "tests/unit", "tests/tooling", "scripts"]
+# tests/ld puts its own helper directories on the path (tests/ld/conftest.py).
 
 [tool.ruff]
 line-length = 100
@@ -132,6 +144,12 @@ ogquery = { path = ".", editable = true }
 [tool.pixi.feature.test.pypi-dependencies]
 pytest = ">=8"
 scipy = ">=1.11"
+hypothesis = ">=6"
+
+# The `http` extra, from PyPI as a user's `pip install ogquery[http]` gets it.
+[tool.pixi.feature.http.pypi-dependencies]
+fsspec = ">=2024.12"
+aiohttp = ">=3.10"
 
 [tool.pixi.feature.dev.dependencies]
 ruff = ">=0.6"
@@ -148,9 +166,12 @@ python = "3.14.*"
 
 [tool.pixi.environments]
 default = { features = ["py312"], solve-group = "default" }
-test = { features = ["py312", "test"], solve-group = "default" }
-dev = { features = ["py312", "test", "dev"], solve-group = "default" }
-test-py314 = { features = ["py314", "test"] }
+# `test`, `dev` and `test-py314` carry the `http` extra, as CI's `tests` matrix installs it;
+# `test-nohttp` is the suite without it, where an http(s) open must name the extra.
+test = { features = ["py312", "test", "http"], solve-group = "default" }
+dev = { features = ["py312", "test", "http", "dev"], solve-group = "default" }
+test-py314 = { features = ["py314", "test", "http"] }
+test-nohttp = { features = ["py312", "test"], solve-group = "default" }
 
 [tool.pixi.feature.test.tasks]
 # Hermetic: no user site-packages, one BLAS thread, as opengwasdb's `test`.
