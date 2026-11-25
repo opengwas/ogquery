@@ -10,12 +10,12 @@ has one owner (owner, on epic opengwas/ogld#18, 21 November 2026; ogld#94). `row
 
 A table opens no store: its reader opens the group, refuses what it cannot read (ld-store §13) and
 hands the table the `ogquery.ld.store.location.OpenedStore` both halves hold — the group, the
-location
-that names the store in a refusal, the recorded provenance and the one chunk cache every read goes
-through. So one store is opened once however many halves read it, a replaced cache is replaced for
-both, and only the companion's mapping is the table's own to release (`close`). A caller that
-wants the table and nothing else opens it with the store layer's own opener,
-`opengwasdb.ld.store.reader.open_variant_table` (#94).
+location that names the store in a refusal, the recorded provenance and the one chunk cache every
+read goes through. So one store is opened once however many halves read it, a replaced cache is
+replaced for both, and only the companion's mapping is the table's own to release (`close`). A
+caller that wants the table and nothing else builds it over the store a reader opens,
+`VariantTable(ogquery.ld.store.reader._opened_store(location, cache_bytes))`, as opengwasdb's own
+`open_variant_table` does for its build-side callers (ADR 0002).
 """
 
 from __future__ import annotations
