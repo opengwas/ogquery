@@ -1,13 +1,14 @@
 """ogld#6's contract: proxies and clumping on the Test Store, with the refusals of ld-store §9.
 
 Expected proxies come from the Test Panel's reference r, quantised and judged on r̂² as the
-spec says.
+spec says. Expected clumps are plink2's leads at k = 0 (lane 2d's `clump_leads`), made with
+`--clump-unphased` and the settings `clump_params()` gives (p1 = p2 = 5e-8, 3,000 kb), against
+the k = 0 Test Store (`store-k0/`).
 
-From opengwasdb's `tests/ld/contract/test_query.py` at `c8ebe4ca` (ogquery#2). Its two
-comparisons with plink2 -- the clump leads and the proxies at k = 0 -- read a k = 0 store that
-opengwasdb's `scripts/ld/make_test_store.py` writes with its build code, so they stay there
-(ADR 0002). The clumping invariants that read it here read the committed k = 10 Test Store:
-they hold at any k.
+From opengwasdb's `tests/ld/contract/test_query.py` at `c8ebe4ca` (ogquery#2). There a test
+writes the k = 0 store with `scripts/ld/make_test_store.py`, build code; here it is that script's
+output, committed (`data/SOURCE` says how it was made). The clumping invariants read the
+committed k = 10 Test Store: they hold at any k.
 """
 
 from __future__ import annotations
@@ -150,6 +151,28 @@ def candidates(p_max: float) -> tuple[list[str], np.ndarray, np.ndarray]:
     return alids(keep), np.abs(z[keep]), keep
 
 
+@pytest.mark.parametrize("r2", [0.01])
+def test_clump_leads_equal_plink2_s_at_k0(
+    r2: float,
+) -> None:
+    """Leads equal plink2's. plink2 v2.0.0-a.6.9LM joins a variant at r² > --clump-r2 and distance
+    < --clump-kb × 1,000 (checked on a constructed pair at exactly r² 0.25, and at exactly 3 Mb),
+    and so does `clump` (owner, 10 November 2026); `proxies` keeps ≥ and ≤. No candidate pair of
+    the Test Panel sits on either edge, so the leads are the same under both; the edges are
+    tested in test_query_edges.py."""
+    store = ogquery.ld.open(support.TEST_STORE_K0)
+    assert store.provenance["adjustment"]["k"] == 0
+    params = panel_data().clump_params()
+    assert params.p1 == params.p2, "with p2 = p1, plink2's leads depend only on the p1 set"
+    names, score, _ = candidates(params.p1)
+    leads = set(store.clump(names, score, r2=r2, kb=params.kb).leads())
+    plink2 = set(alids(panel_data().clump_leads(r2)))
+    assert plink2, "plink2 must have found leads for this to mean anything"
+    assert leads == plink2, (
+        f"only ours: {sorted(leads - plink2)}; only plink2's: {sorted(plink2 - leads)}"
+    )
+
+
 @pytest.mark.parametrize("r2", [0.01, 0.001])
 def test_the_pairs_the_store_s_step_moves_across_r2_are_listed_and_within_it(r2: float) -> None:
     # Reference r and the store's own step, with no query: the pairs are listed at both
@@ -168,6 +191,34 @@ def test_the_pairs_the_store_s_step_moves_across_r2_are_listed_and_within_it(r2:
     among = crossing & np.isin(ref.row_i, rows) & np.isin(ref.row_j, rows)
     found = zip(ref.row_i[among].tolist(), ref.row_j[among].tolist(), strict=True)
     assert set(found) == CROSSING[r2]
+
+
+@pytest.mark.parametrize("r2", [0.01])
+def test_proxies_are_plink2_s_r_outside_the_band_of_the_store_s_step(
+    r2: float,
+) -> None:
+    # k = 0's reference r is plink2's --r-unphased (tests/ld/test_testdata.py). The proxies within
+    # 3 Mb of the comparison's candidates, judged on plink2's r², differ from the store's only by
+    # pairs within 2|r| × half a step of r2.
+    store = ogquery.ld.open(support.TEST_STORE_K0)
+    assert store.provenance["adjustment"]["k"] == 0
+    ref = reference(0)
+    *_, rows = candidates(panel_data().clump_params().p1)
+    names, _ = support.oriented()
+    passing = set(passing_rows().tolist())
+    band = np.abs(ref.r**2 - r2) <= 2 * np.abs(ref.r) * support.HALF_STEP + support.SLACK
+    seen, moved = 0, 0
+    for row in rows:
+        found = store.proxies(alids([row]), r2=r2, kb=2_999)
+        mine = ((ref.row_i == row) | (ref.row_j == row)) & (ref.distance <= 2_999_000)
+        other = np.where(ref.row_i == row, ref.row_j, ref.row_i)
+        theirs = {int(x) for x in other[mine & (ref.r**2 >= r2)] if int(x) in passing}
+        got = {int(np.flatnonzero(names == p)[0]) for p in found.proxy}
+        inside = {int(x) for x in other[mine & band]}
+        assert theirs ^ got <= inside, (row, sorted((theirs ^ got) - inside))
+        seen, moved = seen + len(got), moved + len(theirs ^ got)
+    assert seen > 100, "the candidates must have many proxies for this to mean anything"
+    assert moved < seen / 20, "the band is a sliver of the answer"
 
 
 def test_every_member_reaches_its_lead_and_every_lead_leads_itself() -> None:

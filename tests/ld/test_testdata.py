@@ -49,14 +49,15 @@ CLUMP_P1 = 5e-8
 
 
 def test_every_file_matches_its_manifest_hash() -> None:
-    # The Test Store under store/ is not the Test Panel: scripts/ld/make_test_store.py writes it.
+    # The Test Stores under store/ and store-k0/ are not the Test Panel:
+    # scripts/ld/make_test_store.py writes them (store-k0/: ogquery#2, data/SOURCE).
     files = td.manifest()["files"]
     on_disk = sorted(
         str(p.relative_to(td.TEST_PANEL))
         for p in td.TEST_PANEL.rglob("*")
         if p.is_file()
         and p.name != "manifest.json"
-        and p.relative_to(td.TEST_PANEL).parts[0] != "store"
+        and p.relative_to(td.TEST_PANEL).parts[0] not in ("store", "store-k0")
     )
     # ogquery holds the files its tests read, not the genotypes, PCs and dosages a build or a
     # recomputation reads (tests/ld/data/test-panel/SOURCE): every one here is listed.
