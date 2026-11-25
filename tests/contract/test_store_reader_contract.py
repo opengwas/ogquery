@@ -73,7 +73,7 @@ def test_every_release_answers_as_expected(name: str):
     assert mismatches(RELEASES / name, expected(name)) == []
 
 
-#: The values the libm derives (`query_digests.VALUES`), compared to a few ulps across machines.
+#: The values the libm derives (`ogquery.digests.VALUES`), compared to a few ulps across machines.
 LIBM_VALUES = ("pval", "log10_p")
 
 

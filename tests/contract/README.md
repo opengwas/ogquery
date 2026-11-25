@@ -5,14 +5,23 @@ each (opengwas/opengwasdb#474). It is the contract ogquery, opengwaspy, opengwas
 other port of the Store Reader test against. `VERSION` names the bundle's version and the
 `format_version` its releases are.
 
+**opengwasdb generates it; here it is read only.** Only opengwasdb has the builders, so
+its `tests/store_reader_contract/generate.py` writes the bundle, and ogquery holds a copy:
+`SOURCE` names the opengwasdb commit, and `releases/`, `expected/`, `VERSION` and
+`.gitattributes` are that commit's, byte for byte (`scripts/contract_bundle.py check`,
+run by CI). Issue numbers below are opengwasdb's.
+
 | Path | What it is |
 |---|---|
 | `releases/<release>/` | a Store Release, read only |
 | `expected/<release>.json` | what that release answers |
 | `contract_reader.py` | reads a release through the Store Reader alone and compares it with its expected answers |
 | `test_store_reader_contract.py` | the contract test: the committed bundle, no build |
-| `generate.py` | writes `releases/`, `expected/` and `VERSION`; runs in opengwasdb only |
+| `SOURCE` | the opengwasdb commit the bundle's data was copied from |
 | `.gitattributes` | every file is bytes: no line-ending conversion on checkout |
+
+opengwasdb's `generate.py`, which writes `releases/`, `expected/` and `VERSION`, is not
+copied: it builds with opengwasdb and runs there only.
 
 The bundle is 3.9 MB: 1,083,672 bytes of releases in 1,033 files and 2,806,742 bytes of
 expected answers.
@@ -63,7 +72,8 @@ rewritten release.
   it, and a reader answers one Analysis from such a tier by filtering its rows (spec §18).
 
 `ogdb validate` therefore fails exactly these four releases, each on this rule alone and
-every other release on none (`tests/test_store_reader_contract_bundle.py` holds it):
+every other release on none (opengwasdb's `tests/test_store_reader_contract_bundle.py`
+holds it):
 
 <!-- validate-fails -->
 | Release | Rule | Target |
@@ -78,8 +88,8 @@ every other release on none (`tests/test_store_reader_contract_bundle.py` holds 
 ## What a release must answer
 
 `expected/<release>.json` holds `bundle_version`, `format_version`, `release`, and every
-answer of `opengwasdb.store.query_digests.release_answers` rendered twice: as `digests`
-and as `readable`. The questions are one enumeration (`query_digests.questions`), so both
+answer of `ogquery.digests.release_answers` rendered twice: as `digests`
+and as `readable`. The questions are one enumeration (`ogquery.digests.questions`), so both
 hold the same answers, in sections:
 
 - `shapes`: each shape `query_shapes` asks, Observed-Only and not: `analysis`, `phewas`,
@@ -108,55 +118,44 @@ read, which JSON round-trips. **libm.** `pval` and `log10_p` are the libm's (`er
 `log`, `log1p`), which differ in the last ulp between C libraries -- both do between this
 bundle's generating host and GitHub's runner, two glibcs -- so every reader, the Python ones
 included, compares both to within four float64 ulps: relative `4 * 2**-52`, about
-8.9e-16, NaN equal to NaN (`query_digests.CROSS_MACHINE_RTOL`); a relative change of 1e-9
+8.9e-16, NaN equal to NaN (`ogquery.digests.CROSS_MACHINE_RTOL`); a relative change of 1e-9
 is a difference. They are the only values a reader derives with the libm, so every other
 value is compared exactly: `beta` is ``z * se``, which IEEE rounds alike everywhere.
 
 **`digests` are opengwasdb's and ogquery's, not a port's.** A digest is a sha256 over a
 numpy array's dtype string, its shape and its bytes in native order, and over Python's
-`repr` of each value of an object array (`query_digests.digest_array`). Reproducing that
+`repr` of each value of an object array (`ogquery.digests.digest_array`). Reproducing that
 outside Python means reproducing numpy's dtype names and Python's `repr` of floats, None
 and strings, which is a second implementation of both rather than of the Store Reader. So
 the Python readers compare every digest, and a port compares `readable`, which reaches every
 answer, every row count and every status, with fewer rows. `pval` and `log10_p` are no
 digest's: they are kept as numbers beside them, since a digest cannot be compared to a few
 ulps (above). Between two releases read by one build -- the rewrite's proof --
-`query_digests.differences` compares them exactly, its default.
+`ogquery.digests.differences` compares them exactly, its default.
 
 ## Running the contract
 
-    pytest tests/store_reader_contract
+    pytest tests/contract
 
 The test opens each release with the Store Reader alone, `open_release(path)` and
 `query_release`, with no Variant Table reader: a 0.3.0 release's table refuses every
 read, so a read that reached `variants.tsv.gz` fails. It compares every digest and readable
 value with `expected/`, and loads none of pandas, scipy, pysam, sqlite3 or threadpoolctl.
-It imports only the Store Reader and `opengwasdb.store.query_digests`. The questions move
-with the reader in ogquery#1, so in ogquery those imports, in `contract_reader.py`, are the
-lines that change.
+It imports only ogquery (`ogquery.digests` holds the questions). CI runs it on Linux,
+macOS and Windows.
 
-## Regenerating
+## Where it comes from, and refreshing it
 
-From the opengwasdb repository root:
+opengwasdb regenerates the bundle whenever a builder, a planting or an answer changes, and
+raises its `BUNDLE_VERSION` (`VERSION`) when the committed bundle changes; its own
+`pixi run -e dev contract-check` holds its copy to its generator. To take a new bundle:
 
-    pixi run -e dev python tests/store_reader_contract/generate.py
+    python scripts/contract_bundle.py refresh --commit <opengwasdb commit>
+    pytest tests/contract
 
-It builds the releases, plants the states above, and writes the bundle beside itself. Raise
-`BUNDLE_VERSION` in `generate.py` whenever the committed bundle changes after it is first
-merged. A build stamps when, by which version and from where it ran; the generator
-re-stamps those as fixed values and refuses a release in which any other time or absolute
-path is left in a text file (its docstring). It re-executes itself in the test task's
-environment -- `PYTHONNOUSERSITE=1`, so a numpy in the user's site-packages cannot shadow
-the locked one, and one BLAS thread -- with `BLOSC_NTHREADS=1`, since a threaded Blosc
-writes a chunk's blocks in the order its threads finish.
+`refresh` replaces `releases/`, `expected/`, `VERSION` and `.gitattributes` with that
+commit's and rewrites `SOURCE`. A refresh that fails here is a change in what the Store
+Reader must answer, so the reader changes with it, in opengwasdb first while it still
+carries the reader, then here. Never edit the data by hand: `check` refuses it.
 
-    pixi run -e dev contract-check
-
-runs what is too slow for every test run (`CONTRIBUTING.md`, Test tiers): the generator
-into a temporary directory, then `git diff --no-index --exit-code` against `releases`,
-`expected` and `VERSION`, so a builder, planting or answer that changed without the bundle
-fails; and the six format-parity cases `tests/test_store_reader_contract_parity.py` leaves
-to it. That file runs three in every test run (`dense_ranges`, `ragged_completed`,
-`hybrid_completed`: one per layout, both legacy states): each release, built with the same
-plantings at format 0.2.3 (`tests/format_0_2_3.py`), rewritten by `ogdb rewrite-release`
-and given its `LEGACY_STATES`, answers exactly as the committed release does.
+    python scripts/contract_bundle.py check      # pixi run -e dev contract-check

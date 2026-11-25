@@ -1,0 +1,33 @@
+"""Load a module from `scripts/` so it can be tested (from opengwasdb, opengwas/opengwasdb#333).
+
+The scripts under `scripts/` are entry points, not part of the installed
+package, so a test loads them by path. Kept in one place so the callers cannot drift.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+from types import ModuleType
+
+SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
+
+
+def load_script(name: str, directory: Path = SCRIPTS) -> ModuleType:
+    """The script `directory`/`name`.py as a module. `directory` is on `sys.path` while it loads,
+    as it is when the script is run, so a script may import a sibling by name."""
+    path = directory / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None, f"cannot load {path}"
+    module = importlib.util.module_from_spec(spec)
+    # Registered before execution so that anything the module resolves through
+    # its own namespace -- a dataclass reads `sys.modules[cls.__module__]` --
+    # finds it. Without this a script defining a dataclass cannot be loaded.
+    sys.modules[name] = module
+    sys.path.insert(0, str(directory))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(directory))
+    return module

@@ -5,9 +5,10 @@ and, for each, what the Store Reader must answer: `expected/<release>.json`. Thi
 opens a release with the Store Reader -- `open_release(path)` and `query_release`, never
 opengwasdb's `query_store`, and no Variant Table reader: a 0.3.0 release's table refuses
 every read, so a read that reached `variants.tsv.gz` fails the contract -- and compares
-its answers with that file. It imports the Store Reader and the questions
-(`ogquery.digests`) and nothing else of opengwasdb or of its tests, so the
-directory moves to ogquery whole: there the imports below are the only lines that change.
+its answers with that file. It imports ogquery -- the Store Reader and the questions,
+`ogquery.digests` -- and nothing else. It moved from opengwasdb's
+`tests/store_reader_contract/` with the reader (ogquery#1), where its imports were the
+only lines that changed.
 """
 
 from __future__ import annotations
