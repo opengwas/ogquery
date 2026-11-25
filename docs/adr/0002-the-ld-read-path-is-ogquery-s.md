@@ -24,13 +24,13 @@ path belongs beside it.
 
 **The read side of `opengwasdb.ld` moves into `ogquery/ld/`**, from opengwasdb
 [`c8ebe4ca`](https://github.com/opengwas/opengwasdb/commit/c8ebe4ca2e7697f3b723fd89ebb645bb1d221fd4),
-by its module names: `opengwasdb.ld.format.*` is `ogquery.ld.format.*`, `opengwasdb.ld.store.reader`
-is `ogquery.ld.store.reader`, `opengwasdb.ld.query.ldstore` is `ogquery.ld.query.ldstore`, and so
-on. `ogquery.ld.open` opens an LD Store; `LDStore.matrix`, `region`, `proxies` and `clump` answer
-as before, with their results (`LDMatrix`, `Proxies`, `Clumps`, `Variants`) and refusals
-(`Refusal`, `RefusalReason`, `InputError`). Beneath them come the store reader, the chunk cache
-and location handling, decoding, the Partner Rows' frame reads, the variant table and the read
-side of the LD format.
+by its module names: `opengwasdb.ld.format.*` is `ogquery.ld.format.*`,
+`opengwasdb.ld.store.reader` is `ogquery.ld.store.reader`, `opengwasdb.ld.query.ldstore` is
+`ogquery.ld.query.ldstore`, and so on. `ogquery.ld.open` opens an LD Store; `LDStore.matrix`,
+`region`, `proxies` and `clump` answer as before, with their results (`LDMatrix`, `Proxies`,
+`Clumps`, `Variants`) and refusals (`Refusal`, `RefusalReason`, `InputError`). Beneath them come the
+store reader, the chunk cache and location handling, decoding, the Partner Rows' frame reads, the
+variant table and the read side of the LD format.
 
 **Modules that mixed reads and builds were split by name.** A name a read reaches moved; a name
 only a build, a write or validation calls stayed in opengwasdb, which will import the read side
@@ -135,17 +135,21 @@ Store reader implements it too, as its `rows_in`.
 **The golden data is opengwasdb's, read only here, in ADR 0001's order.** The LD Test Panel's
 answers, its Test Store and its loader came to `tests/ld/` as copies of `c8ebe4ca`'s files.
 `tests/ld/data/SOURCE` names that commit and each file's git blob id, and a test holds every
-file to it byte for byte, offline. One store is generated rather than copied: the k = 0 Test
-Store, which the plink2 comparisons read and which opengwasdb's tests write in a scratch directory
-and do not commit. It was written once by `c8ebe4ca`'s own `scripts/ld/make_test_store.py`, from
-a `git archive` of that commit in its own environment; `SOURCE` records the command, the commit,
-the blob ids of the files it read there, and pins what it wrote. opengwasdb commits the same
-store when it reads LD through ogquery, and a refresh then copies it like the rest. opengwasdb's builders regenerate them, so a change to what the
-LD reader answers moves as a Store Reader change does: **the reader changes first; opengwasdb's
-generator then runs that reader to regenerate the files; ogquery takes that opengwasdb commit's
-files with `SOURCE` naming it.** Until opengwasdb reads LD through ogquery, its own reader is
-the one that answers, and ogquery makes the same change after. Tests that need a store only
-build code can derive stay in opengwasdb (`tests/ld/README.md` lists the read-side ones).
+file to it byte for byte, offline. opengwasdb's builders regenerate these copies, so a change to
+what the LD reader answers moves as a Store Reader change does: **the reader changes first;
+opengwasdb's generator then runs that reader to regenerate the files; ogquery takes that
+opengwasdb commit's files with `SOURCE` naming it.** Until opengwasdb reads LD through ogquery,
+its own reader is the one that answers, and ogquery makes the same change after. Tests that need
+a store only build code can derive stay in opengwasdb (`tests/ld/README.md` lists the read-side
+ones).
+
+**One store is generated, and no opengwasdb commit holds it yet.** The k = 0 Test Store
+(`tests/ld/data/test-panel/store-k0/`), which the plink2 comparisons read, is one opengwasdb's
+tests write in a scratch directory and do not commit. It was written once by `c8ebe4ca`'s own
+`scripts/ld/make_test_store.py`, from a `git archive` of that commit in its own environment;
+`SOURCE` records it apart from the copies -- the command, the commit, the blob ids of the files
+it read there -- and pins what it wrote. The opengwasdb switch lane commits the same store there;
+a refresh then copies it like the rest.
 
 **History is a plain copy.** The modules were split between read and build, so a path's history
 would describe code that is not here; the first commit names opengwasdb `c8ebe4ca` as the source.
