@@ -10,7 +10,11 @@ written without them. ADR 0056 records why each is set; its 23 Nov 2026 note
 records that the configuration moved here from `opengwasdb/store/arrays.py`
 with the read-only open (#464).
 
-`open_group` is the one read-only open of a Store's Zarr group. Every write --
+`open_group` is the one read-only open of a Store's Zarr group, re-exported
+from `ogquery.opening`, which owns it and sets no configuration: the LD read
+path (`ogquery.ld`) opens through it there and so reads under zarr's own
+defaults, as ogld's readers did (ogquery#2, ADR 0002). Every GWAS Store read
+still imports this module, and so has the configuration below. Every write --
 an array or group created, a group opened in any other mode -- goes through
 `opengwasdb.store.arrays`, which also guards writes against consolidated
 metadata (ADR 0056 §4); a read cannot change a release, so it needs no guard.
@@ -19,13 +23,13 @@ metadata (ADR 0056 §4); a read cannot change a release, so it needs no guard.
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 from typing import Any
 
 import numcodecs
 import zarr
-from zarr.core.sync import sync as zarr_sync
-from zarr.storage import LocalStore
+
+# The one read-only open, re-exported by the name every GWAS read imports.
+from ogquery.opening import open_group as open_group
 
 # The module whose import switches Blosc's threads off.  ``import zarr`` loads
 # it today; importing it by name makes sure it has run before the setting below
@@ -156,15 +160,3 @@ def inner_chunk_of(array: Any) -> tuple[int, ...]:
     read unit.  A store with one chunk per shard has ``chunks == shards``.
     """
     return tuple(int(size) for size in array.chunks)
-
-
-def open_group(path: str | Path) -> Any:
-    """Open a Store Release's Zarr group read-only.
-
-    The one place a reader calls `zarr.open_group`. The stored metadata decides
-    the Zarr format, so a 0.1.0 (Zarr v2) release opens as a 0.2.x (v3) one
-    does. Every write -- and every other open mode -- goes through
-    `opengwasdb.store.arrays` (`open_group`, `open_group_for_write`).
-    """
-    store: LocalStore = zarr_sync(LocalStore.open(root=Path(path), mode="r", read_only=True))
-    return zarr.open_group(store, mode="r", zarr_format=None)

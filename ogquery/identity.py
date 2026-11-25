@@ -5,6 +5,11 @@ applies to what it is asked for and `opengwasdb.variants.normalise` builds the
 canonical identity of a source row on (#464): a chromosome's canonical label
 (`normalise_chromosome`, ADR 0052), an allele's spelling (`identity_allele`,
 `normalise_allele`), and the errors that refuse one.
+
+It also holds the variant order's chromosome rank (`chromosome_rank`,
+`chromosome_sort_key`), which the LD read path orders by (`ogquery.ld`) and
+`opengwasdb.variants.normalise` re-exports; their bodies came from there, at
+opengwasdb `c8ebe4ca` (ogquery#2).
 """
 
 from __future__ import annotations
@@ -144,3 +149,30 @@ def normalise_allele(allele: str) -> str:
     if any(base not in VALID_BASES for base in value):
         raise InvalidAllele(f"unsupported allele {value!r}")
     return value
+
+
+def chromosome_sort_key(chromosome: str) -> tuple[int, str]:
+    """Sort chromosomes in natural human order where possible."""
+
+    chrom = normalise_chromosome(chromosome)
+    if chrom.isdigit():
+        return (int(chrom), chrom)
+    special = {"X": 23, "Y": 24, "MT": 25}
+    return (special.get(chrom.upper(), 1000), chrom)
+
+
+def chromosome_rank(chromosome: str) -> int:
+    """A chromosome's place in the variant order: `1`-`22`, then `X` 23, `Y` 24, `MT` 25.
+
+    The first field of `chromosome_sort_key`, for a caller that orders chromosomes, or ranges
+    of one, by it alone. A label passes through `normalise_chromosome`, so `chr1` ranks as
+    `1`. Unlike `chromosome_sort_key`, which sorts any other label last, a label off that list
+    -- a contig such as `HLA-A` -- has no rank and raises `VariantNormalisationError`.
+    """
+    rank, label = chromosome_sort_key(chromosome)
+    if label not in CANONICAL_CHROMOSOMES:
+        raise VariantNormalisationError(
+            f"chromosome {chromosome!r} ({label!r}) has no place in the variant order: "
+            "only 1-22, X, Y and MT are ranked"
+        )
+    return rank

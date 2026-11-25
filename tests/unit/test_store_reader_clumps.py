@@ -158,7 +158,7 @@ def test_each_malformed_or_undeclared_group_is_refused_by_name(
 
 def test_a_manifest_reads_its_clumps_entry_and_never_writes_it() -> None:
     manifest = next(Path(__file__).parents[1].glob("contract/releases/*/manifest.json"))
-    data = json.loads(manifest.read_text())
+    data = json.loads(manifest.read_text(encoding="utf-8"))
     assert StoreManifest.from_dict(data).clumps is None
     declared = StoreManifest.from_dict({**data, "clumps": DECLARATION})
     assert declared.clumps == DECLARATION
@@ -182,8 +182,10 @@ def declared_release(tmp_path: Path) -> Path:
     default.create_array("lead", data=np.full(n_rows, -1, dtype=np.int32))
     default.create_array("r", data=np.arange(n_rows, dtype=np.int16))
     default.attrs["clumps"] = {key: 7 for key in sorted(CLUMPS_ATTRIBUTE_KEYS)}
-    manifest = json.loads((path / "manifest.json").read_text())
-    (path / "manifest.json").write_text(json.dumps({**manifest, "clumps": DECLARATION}))
+    manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
+    (path / "manifest.json").write_text(
+        json.dumps({**manifest, "clumps": DECLARATION}), encoding="utf-8"
+    )
     return path
 
 
@@ -199,9 +201,9 @@ def test_a_release_reads_the_clumps_its_manifest_declares(declared_release: Path
 def test_a_release_whose_manifest_does_not_declare_its_clumps_refuses_them(
     declared_release: Path,
 ) -> None:
-    manifest = json.loads((declared_release / "manifest.json").read_text())
+    manifest = json.loads((declared_release / "manifest.json").read_text(encoding="utf-8"))
     del manifest["clumps"]
-    (declared_release / "manifest.json").write_text(json.dumps(manifest))
+    (declared_release / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     tier = open_release(declared_release).top_hit_tiers().tier(5e-8)
     assert tier is not None
     with pytest.raises(MalformedClumps, match="not declared by the release's manifest"):

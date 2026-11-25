@@ -1,0 +1,4 @@
+# The lowest version of each `http` extra dependency pyproject.toml allows, installed with
+# floors.txt by CI's `floors` job (pip -c). tests/tooling/test_floors.py holds this to pyproject.toml.
+fsspec==2024.12.0
+aiohttp==3.10.0

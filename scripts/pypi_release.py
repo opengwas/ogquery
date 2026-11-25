@@ -318,7 +318,7 @@ def _run_plan(args: argparse.Namespace) -> None:
     if args.json_out is not None:
         # Strings only: each entry becomes one leg of a GitHub Actions matrix.
         matrix = [{"tag": r.tag, "version": r.version, "commit": r.commit} for r in owed]
-        args.json_out.write_text(json.dumps(matrix))
+        args.json_out.write_text(json.dumps(matrix), encoding="utf-8")
 
 
 def _version(args: argparse.Namespace) -> str:

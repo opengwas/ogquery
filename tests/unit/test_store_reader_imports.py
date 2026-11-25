@@ -29,6 +29,12 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
+
+#: CI runs the import boundary in its own step (`-m boundary`), and every other step leaves it
+#: out (`-m "not boundary"`), so each of these runs once a leg.
+pytestmark = pytest.mark.boundary
+
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = "ogquery"
 OWN = "ogquery"

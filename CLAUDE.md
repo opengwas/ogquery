@@ -14,10 +14,12 @@ than degrade quietly, and never substitute a default for missing data.
 - **Dependencies.** ogquery imports numpy, zarr, numcodecs, the standard library (not
   `sqlite3`) and itself, and nothing else, ever: no pysam, scipy, pandas or SQLite, not
   even inside a function. `tests/unit/test_store_reader_imports.py` fails otherwise. A
-  test may use scipy as a reference; the package may not.
+  test may use scipy as a reference; the package may not. Reading over HTTP needs fsspec
+  and aiohttp, the `http` extra, which zarr imports: ogquery only checks they are there.
 - **The contract bundle** (`tests/contract/`) is opengwasdb's and read only. Never edit
   `releases/` or `expected/` to make a test pass: a failing contract is a wrong answer.
-  `tests/contract/README.md` says how to refresh it from opengwasdb.
+  `tests/contract/README.md` says how to refresh it from opengwasdb. The LD test data
+  (`tests/ld/data/`, `tests/ld/testdata.py`) is the same: `tests/ld/README.md`.
 
 ## Environment
 
