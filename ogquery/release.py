@@ -38,6 +38,7 @@ from ogquery.format import LAST_0_2_FORMAT_VERSION, carries_variant_offsets, che
 from ogquery.hybrid import DENSE_TO_SHARED_FILENAME, shared_axis_root
 from ogquery.manifest import StoreManifest
 from ogquery.panel_axis import AnyVariantAxis, PanelVariantAxis
+from ogquery.top_hits import TopHitTiers
 from ogquery.variant_axis import (
     LegacyTableOpener,
     LegacyVariantTable,
@@ -203,6 +204,12 @@ class StoreRelease(ReleasePaths):
     def arrays(self) -> Any:
         """Open this release's ``data.zarr`` group read-only (`release_arrays`)."""
         return release_arrays(self.path)
+
+    def top_hit_tiers(self, root: Any = None) -> TopHitTiers:
+        """This release's Top-Hit tiers, read from `root` (its `data.zarr`, opened here if
+        None), knowing which tier's Clumps its manifest declares (spec §2, §18.1)."""
+        return TopHitTiers(self.arrays() if root is None else root,
+                           clumps=self.manifest.clumps)
 
     def variant_axis(self, *, aliases: bool) -> AnyVariantAxis:
         """This release's Variant Axis; `aliases` also consults `variant_aliases`. For a
