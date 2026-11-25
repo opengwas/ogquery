@@ -103,6 +103,18 @@ def check_release(release: Path, expected: dict[str, Any]) -> int:
     return sum(len(section) for section in want.values() if isinstance(section, dict))
 
 
+def check_release_is_let_go(release: Path) -> None:
+    """Every facade over `release` is closed, so its files can be deleted: on Windows a
+    file a reader still memory-maps cannot be (`ogquery.npy_sidecar.release_maps`)."""
+    try:
+        shutil.rmtree(release)
+    except OSError as error:
+        raise SmokeTestFailure(
+            f"{release.name} could not be deleted after every facade over it was closed: "
+            f"{error}"
+        ) from error
+
+
 def check_no_heavy_import() -> None:
     loaded = [name for name in HEAVY if name in sys.modules]
     if loaded:
@@ -124,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
         with tempfile.TemporaryDirectory() as scratch:
             release = Path(shutil.copytree(args.fixture, Path(scratch) / args.fixture.name))
             compared = check_release(release, expected)
+            check_release_is_let_go(release)
         check_no_heavy_import()
     except (SmokeTestFailure, OSError) as failure:
         print(f"FAIL: {failure}", file=sys.stderr)

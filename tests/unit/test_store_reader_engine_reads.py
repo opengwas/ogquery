@@ -105,6 +105,7 @@ def test_source_alids_resolve_to_their_rows_and_the_table_scan_stops_once_all_ar
     found = axis.indices_by_source_alid({"1:501:A:G", "1:503:A:G", "1:999:A:G"})
     assert found == {"1:501:A:G": 1, "1:503:A:G": 3}
     assert table.read == 6  # an ALID the table lacks is looked for to the end
+    axis.close()  # its maps let go, so the next axis can rewrite the files (Windows)
 
     axis, table = _axis(tmp_path, rows, "0.2.3")
     assert axis.indices_by_source_alid({"1:501:A:G", "1:503:A:G"}) == {
@@ -161,7 +162,10 @@ def test_records_stream_what_all_materialises(tmp_path: Path, version: str):
     assert first.variant_index == 0
     assert table.read == (1 if version == "0.2.3" else 0)  # 0.3.0 reads the sidecars
     streamed = [first, *stream]
-    assert streamed == _axis(tmp_path, rows, version)[0].all()
+    axis.close()  # its maps let go, so the next axis can rewrite the files (Windows)
+    again, _ = _axis(tmp_path, rows, version)
+    assert streamed == again.all()
+    again.close()
     assert streamed == [parse_variant_line(row) for row in rows]  # the table's rows, either way
 
 

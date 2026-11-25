@@ -51,7 +51,7 @@ from ogquery.format import (
 )
 from ogquery.hybrid import DenseComponentSharesAxis, shared_axis_root
 from ogquery.identity import normalise_chromosome
-from ogquery.npy_sidecar import WINDOW_ROWS
+from ogquery.npy_sidecar import WINDOW_ROWS, release_maps
 from ogquery.position_sidecar import MissingPositionSidecar, PositionSidecar
 from ogquery.rsid_index import (
     VARIANT_RSID_BYTES_FILENAME,
@@ -243,6 +243,7 @@ class VariantAxis:
             if carries_variant_offsets(format_version)
             else None
         )
+        self._reads_table = self._offsets is not None
         self._legacy = legacy
         # The ALID index the release's `format_version` carries, and no other
         # (`open_alid_index`): format 0.3.0's sidecar or the 0.2 series' fixed-width pair.
@@ -291,7 +292,7 @@ class VariantAxis:
     def reads_table(self) -> bool:
         """Whether this release's queries read its Variant Table: the 0.2 series' do,
         0.3.0's never do (#469)."""
-        return self._offsets is not None
+        return self._reads_table
 
     @property
     def alid_index(self) -> AlidIndex:
@@ -329,7 +330,11 @@ class VariantAxis:
         return sidecar
 
     def close(self) -> None:
+        """Close the Variant Table reader and release every memory map this axis holds
+        (`npy_sidecar.release_maps`), so the release's files can be replaced or deleted,
+        on Windows too. A read after this raises `npy_sidecar.ReaderClosed`."""
         self._legacy.close()
+        release_maps(self)
 
     def by_identifier(self, identifier: str) -> VariantRecord | None:
         """Resolve one ALID or rsid to a single Store Variant Table row.

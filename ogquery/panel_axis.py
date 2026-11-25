@@ -36,6 +36,7 @@ import numpy as np
 from ogquery.alid import ParsedAlid
 from ogquery.alid_index import ABSENT, AlidIndex
 from ogquery.hybrid import DenseComponentSharesAxis, panel_rows
+from ogquery.npy_sidecar import release_maps
 from ogquery.variant_axis import (
     VariantAxis,
     VariantRecord,
@@ -169,7 +170,10 @@ class PanelVariantAxis:
         raise self._refused("Variant Table")
 
     def close(self) -> None:
+        """Close the shared axis and release `dense_to_shared.npy`'s map
+        (`npy_sidecar.release_maps`)."""
         self._shared.close()
+        release_maps(self)
 
     def index_of(self, identifier: str) -> int | None:
         rows = self.indices_by_identifiers([identifier])

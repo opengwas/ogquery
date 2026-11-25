@@ -10,4 +10,7 @@
   reader for its Store Variant Table, `open_release(path, legacy=...)`, as
   opengwasdb passes; without one it is refused with `VariantTableReaderRequired`,
   which names its `format_version` and the way to 0.3.0: `ogdb rewrite-release`
-  for a 0.2.3 release, a rebuild from source for an earlier one.
+  for a 0.2.3 release, a rebuild from source for an earlier one. Closing a
+  facade (or leaving its `with` block) releases every memory map of the
+  release's sidecars, so on Windows its files can then be replaced or deleted;
+  a read through a closed facade raises `ReaderClosed`.

@@ -39,7 +39,6 @@ is all a fixture of a few hundred rows needs; opengwasdb's reader seeks with tab
 
 from __future__ import annotations
 
-import gc
 import gzip
 import json
 import shutil
@@ -50,6 +49,7 @@ import numpy as np
 
 from ogquery.alid import ALID_DTYPE, is_indexable_alid
 from ogquery.alid_sidecar import ALID_SIDECAR_FILENAMES, AlidSidecar
+from ogquery.npy_sidecar import release_maps
 from ogquery.position_sidecar import POSITION_SIDECAR_FILENAMES
 from ogquery.source_alid_sidecar import SOURCE_ALID_SIDECAR_FILENAMES
 from ogquery.variant_axis import variant_alid_bytes_path, variant_alid_rows_path
@@ -72,7 +72,6 @@ def as_0_2(release: Path, version: str = "0.2.3") -> Path:
     if manifest["primary_layout"] == "hybrid":
         raise ValueError(f"{release} is a Hybrid, whose 0.2 copy only opengwasdb can write")
     alids = _alids(release)
-    gc.collect()  # no map of a sidecar outlives the read: Windows deletes no mapped file
     for name in (*ALID_SIDECAR_FILENAMES, *POSITION_SIDECAR_FILENAMES):
         (release / name).unlink()
     for name in SOURCE_ALID_SIDECAR_FILENAMES:
@@ -88,7 +87,9 @@ def as_0_2(release: Path, version: str = "0.2.3") -> Path:
 def _alids(release: Path) -> list[str]:
     sidecar = AlidSidecar.open(release)
     assert sidecar is not None, f"{release} has no ALID sidecar: not a 0.3.0 release"
-    return [str(alid) for alid in sidecar.alids(np.arange(sidecar.n_rows)).tolist()]
+    alids = [str(alid) for alid in sidecar.alids(np.arange(sidecar.n_rows)).tolist()]
+    release_maps(sidecar)  # Windows deletes no file a live map holds
+    return alids
 
 
 def copy_as_0_2(release: Path, into: Path, version: str = "0.2.3") -> Path:

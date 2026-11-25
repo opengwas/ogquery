@@ -284,6 +284,10 @@ class _StoreQueryBase:
     _variant_axis: AnyVariantAxis
 
     def close(self) -> None:
+        """Close the facade. Its Variant Axis closes too, letting go of every memory map
+        of the release's sidecars (`npy_sidecar.release_maps`), so once a facade is closed
+        -- or its `with` block left -- the release's files can be replaced or deleted, on
+        Windows as elsewhere. The zarr arrays hold no file open between reads."""
         raise NotImplementedError
 
     def __enter__(self) -> Self:

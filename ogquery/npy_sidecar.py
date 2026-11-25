@@ -15,14 +15,21 @@ sidecar (every row's ALID) and the `source_alid` sidecar (each lifted row's). Bo
 encode (`encode_utf8_offsets`), slice (`slice_texts`) and check (`offsets_fault`)
 through this module.
 
+Every array these open is memory-mapped, so a reader holds its files open until it
+lets go of them. On Windows a mapped file can be neither replaced nor deleted, so a
+reader's `close()` releases its maps (`release_maps`): the one place they are let go,
+for every codec. A read through a released reader raises `ReaderClosed` rather than
+answering from nothing.
+
 This module imports numpy and the standard library only, as every codec does.
 """
 
 from __future__ import annotations
 
+import mmap
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import numpy as np
 
@@ -32,6 +39,68 @@ OFFSET_DTYPE = np.dtype("<u8")
 #: Rows a reader names, or a scan reads, at a time, where one pass over a whole sidecar
 #: would hold an object or an index array the size of the axis.
 WINDOW_ROWS = 65_536
+
+
+class ReaderClosed(RuntimeError):
+    """A read of a sidecar or index whose reader was closed (`release_maps`)."""
+
+
+class _Released:
+    """What a memory-mapped array becomes when its reader closes: any use of it raises
+    `ReaderClosed`, so a read after `close()` fails loudly rather than reading as empty."""
+
+    def __init__(self, what: str) -> None:
+        self._what = what
+
+    def _refuse(self, *_: Any, **__: Any) -> NoReturn:
+        raise ReaderClosed(f"{self._what} was released when its reader was closed")
+
+    __getitem__ = __len__ = __iter__ = __array__ = __array_function__ = _refuse
+
+    def __getattr__(self, name: str) -> NoReturn:
+        self._refuse()
+
+
+def is_memory_mapped(value: object) -> bool:
+    """Whether `value` is, or is a view or `memoryview` of, a memory-mapped array: one
+    that keeps its file open. A copy made from one (fancy indexing, `np.array`) is not."""
+    while value is not None:
+        if isinstance(value, (np.memmap, mmap.mmap)):
+            return True
+        if isinstance(value, memoryview):
+            value = value.obj
+        elif isinstance(value, np.ndarray):
+            value = value.base
+        else:
+            return False
+    return False
+
+
+def release_maps(owner: object) -> None:
+    """Let go of every memory map `owner` holds, and those of the ogquery readers it holds.
+
+    Each attribute that is a mapped array (`is_memory_mapped`) is replaced by one that
+    refuses every use (`ReaderClosed`), and every attribute that is itself an ogquery
+    object is walked the same way; anything else -- a caller's Variant Table reader, a
+    zarr array -- is left alone. Once the last reference to a map is gone, numpy closes
+    it, and on Windows its file can be replaced or deleted. A caller that kept a view of
+    a mapped array keeps that map open: query answers are copies, so none does.
+    """
+    stack, seen = [owner], set()
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        attributes = getattr(current, "__dict__", None)
+        if not attributes:
+            continue
+        for name, value in list(attributes.items()):
+            if is_memory_mapped(value):
+                what = f"{type(current).__name__}.{name}"
+                object.__setattr__(current, name, _Released(what))  # frozen dataclasses too
+            elif type(value).__module__.split(".")[0] == "ogquery":
+                stack.append(value)
 
 
 def encode_utf8_offsets(encoded: Sequence[bytes]) -> tuple[np.ndarray, np.ndarray]:
