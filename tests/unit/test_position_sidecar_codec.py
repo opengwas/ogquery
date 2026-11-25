@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from ogquery.identity import normalise_chromosome
 from ogquery.position_sidecar import (
     CHROMOSOME_OFFSETS_FILENAME,
     CHROMOSOMES_FILENAME,
@@ -28,7 +29,16 @@ from ogquery.position_sidecar import (
     sidecar_problems,
     write_position_sidecar,
 )
-from opengwasdb.variants.normalise import chromosome_sort_key
+
+
+def chromosome_sort_key(chromosome: str) -> tuple[int, str]:
+    """The variant order's chromosome key: `1`-`22`, `X`, `Y`, `MT`, then any other label.
+    opengwasdb's (`opengwasdb.variants.normalise.chromosome_sort_key`), which its builders
+    and validator pass as `chromosome_key`; the Store Reader takes it as a parameter."""
+    chrom = normalise_chromosome(chromosome)
+    if chrom.isdigit():
+        return (int(chrom), chrom)
+    return ({"X": 23, "Y": 24, "MT": 25}.get(chrom.upper(), 1000), chrom)
 
 #: ``(chromosome, position)`` per row, in row order.
 ROWS = [

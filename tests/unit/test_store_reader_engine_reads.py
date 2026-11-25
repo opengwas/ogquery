@@ -67,7 +67,7 @@ def _axis(
     """An axis of `version` over `rows`, and an rsID index naming none (`_row`): on 0.3.0
     its sidecars, `source_alid`'s included; on 0.2.3 the fixed-width ALID pair and
     offsets the table is read by."""
-    from format_0_2_3 import write_fixed_width_alid_index
+    from format_0_2 import write_fixed_width_alid_index
 
     records = [parse_variant_line(row) for row in rows]
     alids = [record.alid for record in records]

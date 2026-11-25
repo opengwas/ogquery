@@ -13,22 +13,31 @@ unknown release series, read a known one, and say something when it meets a
 compatible version from the future rather than quietly returning a subset of
 the data.
 
-The completion test covers the hole ADR 0041 §4 exists to close: completion
-preserves its source's `format_version` because it writes into the source's
-arrays, so a source this build cannot write must be refused before any work.
+In ogquery these are the reader's gates (`ogquery.format`), and the real release is a
+copy of a contract-bundle release opened by `open_release`. What a writer refuses --
+completion, the converter, `check_writable_format_version` -- is opengwasdb's, and its
+tests stay there.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
+from contract_reader import RELEASES
 
-from opengwasdb.layouts.dense.complete import complete_dense_store
-from opengwasdb.store import open as store_open
 from ogquery import format as store_format
+from ogquery.facade import query_release
 from ogquery.format import CURRENT_FORMAT_VERSION, PRE_RESET_FORMAT_VERSIONS
+from ogquery.release import open_release
+
+
+@pytest.fixture
+def dense_store_path(tmp_path: Path) -> Path:
+    """A copy of the bundle's Dense release, format 0.3.0, to restamp."""
+    return Path(shutil.copytree(RELEASES / "dense_observed", tmp_path / "dense_observed"))
 
 
 def _set_version(store: Path, version: str) -> None:
@@ -198,60 +207,25 @@ def test_a_newer_compatible_version_is_read_but_warned_about(caplog):
     assert "not visible here" in caplog.text
 
 
-# --- against a real store --------------------------------------------------
+# --- against a real release ------------------------------------------------
 
 
-def test_open_store_refuses_a_pre_reset_release(dense_store_path):
-    """The headline of the reset: a store stamped with a pre-release format is
+def test_open_release_refuses_a_pre_reset_release(dense_store_path):
+    """The headline of the reset: a release stamped with a pre-release format is
     never decoded. Its bytes may or may not be readable -- a `3.0` store's are
     identical to a `0.1.0` store's, a `0.1` store's are not -- and this build
     does not try to tell the two apart."""
     _set_version(dense_store_path, "3.0")
 
     with pytest.raises(store_format.UnsupportedFormatVersion, match="Rebuild the release"):
-        store_open.open_store(dense_store_path)
+        open_release(dense_store_path)
 
 
-def test_open_store_rejects_an_unknown_series(dense_store_path):
+def test_open_release_rejects_an_unknown_series(dense_store_path):
     _set_version(dense_store_path, "1.0.0")
 
     with pytest.raises(store_format.UnsupportedFormatVersion):
-        store_open.open_store(dense_store_path)
-
-
-def test_validation_reports_a_pre_reset_release_as_an_error_not_a_crash(dense_store_path):
-    from opengwasdb.validation import validate_store
-
-    _set_version(dense_store_path, "2.0")
-    result = validate_store(dense_store_path)
-
-    assert result.failed() == {"manifest.loads"}
-    assert any("2.0" in error and "Rebuild" in error for error in result.errors)
-
-
-# --- writing is narrower than reading (ADR 0041 §3) ------------------------
-
-
-def test_the_version_this_build_completes_is_writable():
-    """0.2.0 to 0.2.3 are encoded identically, but only a 0.2.2 or 0.2.3 release spells
-    its indels as this build's panel does, so those are the ones a completion writes
-    into (ADR 0038 §4, ADR 0079); either completes to 0.2.3 (issue #338)."""
-    assert store_open.check_writable_format_version("0.2.2") == "0.2.2"
-    assert store_open.check_writable_format_version("0.2.3") == "0.2.3"
-
-
-def test_the_converter_stamps_by_the_builders_rule_and_keeps_sorted_indels():
-    """#247 made the converter's target the builders' version, and #430 stamps both by
-    one rule (`format_version_for`). #381 parts their output: the converter reads
-    `SOURCE_FORMAT_VERSION` (0.1.0, Zarr v2) and copies its stored codes and ALIDs into
-    Zarr v3. A 0.1.0 Store sorts an indel's alleles and says nowhere which is the
-    reference, so its copy is stamped as sorted, 0.2.0, where a build writes 0.2.2
-    (ADR 0079).
-    """
-    from opengwasdb.store import convert
-
-    assert convert.format_version_for is store_format.format_version_for
-    assert convert.SOURCE_FORMAT_VERSION == "0.1.0"
+        open_release(dense_store_path)
 
 
 @pytest.mark.parametrize(
@@ -264,108 +238,19 @@ def test_a_store_spells_its_indels_reference_first_from_0_2_2(version, reference
     assert store_format.indels_reference_first(version) is reference_first
 
 
-@pytest.mark.parametrize("version", ["0.1.0", "0.2.0", "0.2.1"])
-def test_a_store_that_sorts_its_indels_is_readable_but_not_writable(version):
-    """This build reads 0.1.0, 0.2.0 and 0.2.1 and completes only 0.2.2.
-
-    Completion writes into the source's arrays and keeps its format, so each
-    source is refused. Each sorts an indel's alleles, and a completion would add
-    panel ALIDs spelt reference first beside them, so the remedy is a rebuild:
-    a conversion keeps the sorted spelling (ADR 0079).
-    """
-    store_format.check_format_version(version)
-    with pytest.raises(store_format.UnsupportedFormatVersion, match="Rebuild the release"):
-        store_open.check_writable_format_version(version, source="source release X")
-
-
-def test_a_readable_but_unwritable_version_is_refused():
-    """A newer remainder of a known series is read, with a warning (§21.2), but not
-    written: 0.2.4 spells its indels as 0.2.3 does and is still refused, since this
-    build does not know what else it adds."""
-    store_format.check_format_version("0.2.4")  # still readable, logged as newer
-    with pytest.raises(store_format.UnsupportedFormatVersion, match="reads but cannot write"):
-        store_open.check_writable_format_version("0.2.4", source="source release X")
-
-
-@pytest.mark.parametrize("carries_regions", [False, True])
-def test_a_newer_stamp_is_not_judged_by_this_builds_rule(carries_regions):
-    """A 0.2.4 release is a later package's format: which stamp its features give is
-    that package's rule. This build says to upgrade, never that the stamp is wrong,
-    since re-stamping it 0.2.3 would let this build complete a format it does not
-    know -- as package 0.9.0 tells a 0.2.2 Store it "is 0.2.1"."""
-    with pytest.raises(store_format.UnsupportedFormatVersion) as refused:
-        store_open.check_format_version_stamp("0.2.4", carries_regions=carries_regions)
-    message = str(refused.value)
-    assert "Upgrade opengwasdb" in message and "do not re-stamp" in message, message
-    assert "but a release carrying" not in message, message
-
-
-@pytest.mark.parametrize("version", ["0.1.0", "0.2.0", "0.2.1"])
-def test_completion_refuses_a_source_that_sorts_its_indels(tmp_path, dense_store_path, version):
-    """The guard ADR 0038 §4 added for exactly this moment now fires.
-
-    A 0.1.0, 0.2.0 or 0.2.1 source is readable but not writable by a build that
-    writes 0.2.2, and completion preserves its source's format rather than re-encoding
-    it. Its deletions are spelt like insertions, so the refusal names a rebuild
-    (ADR 0079).
-    """
-    _set_version(dense_store_path, version)
-    out = tmp_path / "completed.opengwasdb"
-
-    with pytest.raises(store_format.UnsupportedFormatVersion, match="sorts an indel's alleles"):
-        complete_dense_store(
-            dense_store_path,
-            out,
-            # Deliberately not a usable panel: the version check must fire
-            # first, so completion never reads it.
-            ld_dir=tmp_path / "no-such-panel",
-            ancestry="EUR",
-        )
-
-    assert not out.exists()
-
-
-def test_completion_refuses_a_source_it_cannot_write_before_doing_any_work(
-    tmp_path, dense_store_path
-):
-    """Completion preserves its source's format_version because it writes into
-    the source's arrays. A pre-reset source cannot be completed at all -- its
-    arrays are in a format this build no longer encodes -- so it fails, and
-    fails *before* the imputation rather than at manifest-write time an hour
-    later.
-    """
-    _set_version(dense_store_path, "2.0")
-    out = tmp_path / "completed.opengwasdb"
-
-    with pytest.raises(store_format.UnsupportedFormatVersion, match="Rebuild the release"):
-        complete_dense_store(
-            dense_store_path,
-            out,
-            # Deliberately not a usable panel: the version check must fire
-            # first, so completion never gets far enough to read it.
-            ld_dir=tmp_path / "no-such-panel",
-            ancestry="EUR",
-        )
-
-    assert not out.exists()
-
-
-def test_a_writer_reads_the_layout_from_the_series_not_the_current_version():
-    """The layout a release is stored in is its series', not `CURRENT_FORMAT_VERSION`'s.
-
-    Adding arrays to a release's own data group needs the format that group is
-    in, so the decision is `ZARR_FORMAT_BY_SERIES`' (issue #313). `0.1.x` is Zarr
-    v2 and is refused; every `0.2.x` is Zarr v3 and is accepted -- including one
-    the constant has not reached yet, because `CURRENT_FORMAT_VERSION` moves
-    *within* a series (issue #381 takes it to `0.2.2`).
-    """
-    assert store_open.check_writable_zarr_layout("0.2.0") == 3
-    assert store_open.check_writable_zarr_layout("0.2.1") == 3
-    assert store_open.check_writable_zarr_layout("0.2.2") == 3
-    with pytest.raises(store_format.UnsupportedFormatVersion, match="convert_store_to_0_2_0"):
-        store_open.check_writable_zarr_layout("0.1.0", source="release at /tmp/x")
-    with pytest.raises(store_format.UnsupportedFormatVersion, match="Zarr format 2"):
-        store_open.check_writable_zarr_layout("0.1.7")
+def test_each_0_3_0_feature_starts_at_0_3_0_and_each_dropped_file_stops_there():
+    """0.3.0 is one format version (ADR 0105): every sidecar it adds is carried from it,
+    and everything it drops is carried before it, so a reader asks one question per file
+    and the answers never disagree within a release."""
+    for version, is_0_3 in (("0.1.0", False), ("0.2.3", False), ("0.3.0", True)):
+        assert store_format.carries_alid_sidecar(version) is is_0_3
+        assert store_format.carries_position_sidecar(version) is is_0_3
+        assert store_format.carries_source_alid_sidecar(version) is is_0_3
+        assert store_format.dense_component_shares_axis(version) is is_0_3
+        assert store_format.carries_variant_offsets(version) is not is_0_3
+        assert store_format.carries_variant_aliases(version) is not is_0_3
+        assert store_format.carries_index_metadata(version) is not is_0_3
+        assert store_format.carries_stored_p(version) is not is_0_3
 
 
 #: The version tables as they were before #467: the package that does not know 0.3.
@@ -380,13 +265,11 @@ def test_a_package_without_the_0_3_series_refuses_a_0_3_0_release_by_name(
     that opened it would find none and answer ALID lookups wrongly (ADR 0105)."""
     from types import MappingProxyType
 
-    from opengwasdb.query import query_store
-
-    assert store_open.open_store(dense_store_path).manifest.format_version == "0.3.0"
+    assert open_release(dense_store_path).manifest.format_version == "0.3.0"
     monkeypatch.setattr(store_format, "SUPPORTED_FORMAT_VERSIONS", MappingProxyType(_BEFORE_0_3))
 
     with pytest.raises(store_format.UnsupportedFormatVersion) as refused:
-        query_store(dense_store_path)
+        query_release(open_release(dense_store_path))
 
     message = str(refused.value)
     assert "format_version='0.3.0'" in message, message
