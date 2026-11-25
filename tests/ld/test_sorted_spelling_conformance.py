@@ -29,7 +29,7 @@ DATA = Path(__file__).resolve().parent / "data" / "identity"
 
 
 def _rows(name: str) -> list[dict[str, str]]:
-    with (DATA / name).open(newline="") as handle:
+    with (DATA / name).open(newline="", encoding="utf-8") as handle:
         header = handle.readline()
         assert header.startswith("# opengwasdb 1ab2b09:"), "the fixture is pinned before ADR 0079"
         return list(csv.DictReader(handle, delimiter="\t"))
