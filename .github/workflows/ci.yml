@@ -1,0 +1,242 @@
+name: CI
+
+# What every pull request into `main` and every push to it must pass (ogquery#1):
+#
+#   tests              the contract bundle (at its cross-machine tolerance), the
+#                      import-boundary test and the unit tests, on Linux, macOS and
+#                      Windows, each on the lowest and highest Python supported;
+#   lint               ruff and mypy;
+#   distributions      the source archive and the wheel, built as a release builds them;
+#   installed wheel    that wheel in a clean venv on each operating system: only numpy,
+#                      zarr, numcodecs and their dependencies install, all as wheels,
+#                      and the installed package answers a bundle release;
+#   contract bundle    tests/contract is the opengwasdb commit tests/contract/SOURCE names;
+#   changelog          a pull request that changes ogquery/ adds a fragment.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: tests, ${{ matrix.os }}, Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # The lowest and highest Python pyproject.toml advertises.
+        python: ["3.12", "3.14"]
+    env:
+      # Hermetic, as the pixi `test` task: no user site-packages, one BLAS thread.
+      PYTHONNOUSERSITE: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The version is derived from the `v*` tags (pyproject.toml).
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          allow-prereleases: true
+
+      - name: Install ogquery and the test tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+          python -m pip check
+
+      # The bundle is bytes: .gitattributes keeps a Windows checkout from converting
+      # line endings, and this fails loudly if one ever does.
+      - name: The checkout holds the bundle's bytes
+        run: git diff --exit-code -- tests/contract
+
+      - name: The contract bundle
+        run: python -m pytest tests/contract -v
+
+      - name: The import boundary
+        run: python -m pytest tests/unit/test_store_reader_imports.py -v
+
+      - name: The unit and tooling tests
+        run: python -m pytest tests/unit tests/tooling
+
+  lint:
+    name: lint and typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: ruff
+        run: ruff check .
+
+      - name: mypy
+        run: mypy ogquery
+
+  # What a `pip install ogquery` user gets, built the way a release builds it: the
+  # source archive first, then the wheel from that archive, so a file the archive
+  # leaves out breaks the wheel here rather than for a user.
+  distributions:
+    name: build and check distributions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the source archive, and the wheel from it
+        run: |
+          python -m pip install build==1.6.1 twine==7.0.0
+          python -m build --outdir dist .
+
+      - name: The metadata renders
+        run: python -m twine check --strict dist/*
+
+      - name: The archives hold what the repository says they hold
+        run: python scripts/check_distributions.py dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+          if-no-files-found: error
+
+  # The wheel above, installed into a fresh venv outside the checkout. Windows is the
+  # acceptance criterion (ogquery#1); Linux and macOS are the same check. pip may
+  # install nothing from source (`--only-binary=:all:`), its report says what came,
+  # and check_installed_dependencies.py holds the environment to ogquery's
+  # dependencies. The checkout supplies only the scripts and one bundle release,
+  # which the smoke test copies out; `-I` keeps the checkout off the import path.
+  installed-wheel:
+    name: clean install, ${{ matrix.os }}, Python ${{ matrix.python }}
+    needs: distributions
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        python: ["3.12", "3.14"]
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONNOUSERSITE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          allow-prereleases: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: ${{ runner.temp }}/dist
+
+      # On Windows, bash is Git Bash: the runner's paths are spelt the Unix way for it
+      # (`cygpath`), and a venv's interpreter is Scripts/python.exe.
+      - name: A fresh venv, and the wheel installed into it from wheels only
+        run: |
+          tmp="$RUNNER_TEMP"; work="$GITHUB_WORKSPACE"
+          if command -v cygpath >/dev/null; then
+            tmp=$(cygpath -u "$tmp"); work=$(cygpath -u "$work")
+          fi
+          python -m venv "$tmp/venv"
+          if [ -x "$tmp/venv/Scripts/python.exe" ]; then
+            venv_python="$tmp/venv/Scripts/python.exe"
+          else
+            venv_python="$tmp/venv/bin/python"
+          fi
+          { echo "TMP_DIR=$tmp"; echo "WORK_DIR=$work"; echo "VENV_PYTHON=$venv_python"; } \
+            >> "$GITHUB_ENV"
+          "$venv_python" -m pip install --upgrade pip
+          "$venv_python" -m pip install --only-binary=:all: \
+            --report "$tmp/pip-report.json" "$tmp"/dist/*.whl
+          "$venv_python" -m pip check
+
+      - name: Only numpy, zarr, numcodecs and their dependencies, nothing compiled
+        run: |
+          "$VENV_PYTHON" -I scripts/check_installed_dependencies.py \
+            --report "$TMP_DIR/pip-report.json"
+
+      - name: The installed package answers a bundle release, outside the checkout
+        run: |
+          wheel=$(basename "$TMP_DIR"/dist/*.whl)
+          version=$(echo "$wheel" | cut -d- -f2)
+          mkdir "$TMP_DIR/run"
+          cd "$TMP_DIR/run"
+          "$VENV_PYTHON" -I "$WORK_DIR/scripts/smoke_test_installed.py" \
+            --fixture "$WORK_DIR/tests/contract/releases/dense_ranges" \
+            --expected "$WORK_DIR/tests/contract/expected/dense_ranges.json" \
+            --version "$version"
+
+  # opengwasdb generates the bundle; here it is read only (tests/contract/README.md).
+  contract-bundle:
+    name: contract bundle is opengwasdb's
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: tests/contract is the commit tests/contract/SOURCE names, byte for byte
+        run: python3 scripts/contract_bundle.py check
+
+  changelog:
+    name: changelog fragment
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The gate diffs against the merge base, which needs real history.
+          fetch-depth: 0
+
+      # The labels reach the check as `--labels`, so the `no-changelog` exemption is
+      # decided and tested in scripts/check_changelog.py rather than by skipping the job.
+      - name: A fragment added alongside source changes
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          git fetch --no-tags origin "${{ github.event.pull_request.base.ref }}"
+          python scripts/check_changelog.py \
+            --base-ref "origin/${{ github.event.pull_request.base.ref }}" \
+            --labels "$LABELS"
