@@ -4,9 +4,10 @@ A rewrite (`opengwasdb.store.rewrite`) changes how a release is stored, never wh
 it answers. Before it publishes, it asks the source and the staged release the same
 deterministic set of questions and refuses on any difference. This module is that
 set of questions and the digest of each answer. It has one owner, here: the Store
-Reader contract bundle's expected answers are its output (`tests/store_reader_contract/`,
-#474), and the store-comparison benchmark calls it for `digest_array` and
-`result_digests`.
+Reader contract bundle's expected answers are its output (`tests/contract/`,
+opengwasdb#474), and opengwasdb's rewrite proof and store-comparison benchmark call it
+for `release_digests`, `digest_array` and `result_digests`. It was
+`opengwasdb.store.query_digests`, and moved here with the Store Reader (ogquery#1).
 
 Every association-returning question the query facade answers is asked: each
 Analysis's associations; a PheWAS of variants spread over the axis, by ALID and by
@@ -64,9 +65,9 @@ answer; `release_answers` asks each once per open and renders the answer twice: 
 digest, and, for a reader in another language that cannot reproduce Python's digests,
 its readable rows (`readable_answer`: the row count, the first rows, and the first row of
 each `association_status`; a refusal's type and named `fields`). `release_digests`, the
-rewrite's proof, is the first rendering alone. A release is opened through `query_store`
-unless a caller passes its own `query`: the Store Reader contract test (#474,
-`tests/store_reader_contract/`) opens it with the Store Reader alone.
+rewrite's proof, is the first rendering alone. A release is opened with the Store Reader
+alone, `query_release(open_release(path))`, unless a caller passes its own `query`:
+opengwasdb passes `query_store`, which also reads a 0.2.x release's Variant Table.
 """
 
 from __future__ import annotations
@@ -589,12 +590,17 @@ def _digested(answer: Any) -> dict[str, str]:
     return _table_digests(answer)
 
 
-def _open(path: str | Path, query: QueryOpener | None) -> Any:
-    if query is None:
-        from opengwasdb.query import query_store
+def open_query(path: str | Path) -> Any:
+    """The query facade over the release at `path`, opened by the Store Reader alone:
+    no Variant Table reader, so a 0.2.x release is refused (`release.open_release`)."""
+    from ogquery.facade import query_release
+    from ogquery.release import open_release
 
-        query = query_store
-    return query(Path(path))
+    return query_release(open_release(Path(path)))
+
+
+def _open(path: str | Path, query: QueryOpener | None) -> Any:
+    return (query or open_query)(Path(path))
 
 
 def release_answers(
@@ -602,7 +608,7 @@ def release_answers(
 ) -> dict[str, Any]:
     """Every answer the release at `path` gives, asked once (`questions`) and rendered
     twice: ``digests`` (`release_digests`) and, with `readable`, ``readable``
-    (`readable_answer`). `query` opens the release (`query_store` by default; module
+    (`readable_answer`). `query` opens the release (`open_query` by default; module
     docstring)."""
     with _open(path, query) as q:
         variants = q.variants_table()
