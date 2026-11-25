@@ -13,6 +13,7 @@ pool that still progresses, and a damaged frame that fails the whole request wit
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 import threading
 from pathlib import Path
@@ -47,8 +48,16 @@ T_FAR = t_far(771, 10)
 SAMPLE = ALL[::7]
 SMALL = ALL[:40]
 
-#: |z|-like scores, fixed so the frozen answers mean the same request every run.
-SCORE = np.abs(np.random.default_rng(71).normal(4.0, 1.5, len(ALL)))
+#: |z|-like scores, fixed so the frozen answers mean the same request every run, on every machine.
+#: `Generator.normal(4.0, 1.5)` computes 4.0 + 1.5 × z as one C expression, which a compiler may
+#: fuse into one multiply-add (clang on arm64 macOS does), changing the last bit of about one score
+#: in ten: on macOS every clump of these scores fingerprinted differently, with every lead, member
+#: and r the same (opengwas/ogquery#2, CI round 1). So the multiply and the add are two numpy
+#: operations, each rounded, which is `normal`'s answer where nothing is fused. z itself is the
+#: ziggurat's core for this seed -- one multiply a value, no sample in its libm-computed tail -- so
+#: it is the same everywhere. `SCORE_SHA256` pins the request, so a request that differs says so.
+SCORE = np.abs(np.add(4.0, np.multiply(1.5, np.random.default_rng(71).standard_normal(len(ALL)))))
+SCORE_SHA256 = "7a21248e8e4f32ee1531015f54b14821a648039980e2ff573485cb20d1a74050"
 SMALL_SCORE = np.abs(np.linspace(1.0, 6.0, len(SMALL)))
 
 #: A list that names one row twice with the same score, another twice with different ones, and a
@@ -216,7 +225,35 @@ FROZEN: dict[str, str] = {
 @pytest.mark.parametrize("name", [case[0] for case in CASES])
 def test_every_answer_is_the_previous_reader_s(name: str) -> None:
     assert name in FROZEN, f"{name} was never frozen from the previous reader"
-    assert fingerprint(ogquery.ld.open(TEST_STORE), name) == FROZEN[name]
+    # The request first: an answer to another request is not the previous reader's answer, and
+    # saying which of the two differs is the diff a fingerprint alone cannot give.
+    scores = np.ascontiguousarray(SCORE, dtype="<f8")
+    assert hashlib.sha256(scores.tobytes()).hexdigest() == SCORE_SHA256, (
+        "the request differs on this machine: SCORE is not the frozen scores"
+    )
+    store = ogquery.ld.open(TEST_STORE)
+    got = fingerprint(store, name)
+    differs = f"{name}: the answer differs, not the request\n{_summary(store, name)}"
+    assert got == FROZEN[name], differs
+
+
+def _summary(store: ogquery.ld.LDStore, name: str) -> str:
+    """What a mismatched answer holds, to read beside the frozen one: its size, its leads and the
+    extremes of its floats, column by column."""
+    _, kind, subset, r2, kb = {case[0]: case for case in CASES}[name]
+    names, score = _subset(subset, store)
+    got = (
+        store.clump(names, score, r2=r2, kb=kb) if kind == "clump"
+        else store.proxies(names, r2=r2, kb=kb)
+    )
+    lines = [f"{len(got)} rows, absent {got.absent}"]
+    if kind == "clump":
+        lines.append(f"leads ({len(got.leads())}): {got.leads()[:10].tolist()}")
+    for column, values in got.columns().items():
+        if values.dtype.kind == "f" and len(values):
+            extremes = f"min {values.min()!r} max {values.max()!r} sum {values.sum()!r}"
+            lines.append(f"{column}: {extremes}")
+    return "\n".join(lines)
 
 
 def test_both_queries_read_nothing_of_the_near_band_or_the_proxy_index() -> None:
