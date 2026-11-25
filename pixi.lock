@@ -3185,7 +3185,7 @@ packages:
   name: ogquery
   requires_dist:
   - numcodecs>=0.17
-  - numpy>=1.26,<2.5
+  - numpy>=2.0,<2.5
   - zarr>=3.4,<4
   - mypy>=1.10 ; extra == 'dev'
   - pytest>=8 ; extra == 'dev'

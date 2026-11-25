@@ -33,13 +33,16 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 # numpy, zarr and numcodecs only, at opengwasdb's bounds (its pyproject.toml at
-# 69c29452). Nothing to compile: each ships wheels for every platform above.
-# tests/unit/test_store_reader_imports.py holds the package to these three.
+# 69c29452) raised to what zarr 3.4 allows, so each floor is one pip can install:
+# zarr 3.4 requires numpy 2. Nothing to compile: each ships wheels for every platform
+# above. tests/unit/test_store_reader_imports.py holds the package to these three, and
+# CI's `floors` job runs the suite at the floors (.github/floors.txt).
 dependencies = [
-  "numpy>=1.26,<2.5",
+  "numpy>=2.0,<2.5",
   "zarr>=3.4,<4",
   # 0.17 is the first numcodecs that locks Blosc's global context on decompress as
-  # well as compress; the threaded decoding relies on it (opengwasdb#244).
+  # well as compress; the threaded decoding relies on it (opengwasdb#244). zarr 3.4.0
+  # accepts 0.17.0; later zarr 3.4.x exclude it, and pip then takes 0.17.1 or later.
   "numcodecs>=0.17",
 ]
 
@@ -156,7 +159,7 @@ contract = "PYTHONNOUSERSITE=1 pytest tests/contract"
 
 [tool.pixi.feature.dev.tasks]
 lint = "ruff check ."
-typecheck = "mypy ogquery"
+typecheck = "mypy ogquery scripts"
 # The committed bundle is opengwasdb's, read only here: this compares it with the
 # bundle at the opengwasdb commit tests/contract/SOURCE names (tests/contract/README.md).
 contract-check = "python scripts/contract_bundle.py check"
