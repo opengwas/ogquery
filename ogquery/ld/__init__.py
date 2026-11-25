@@ -8,6 +8,8 @@ The read path of opengwasdb's `opengwasdb.ld`, moved here from opengwasdb `c8ebe
     store.region(chrom, centre, radius, fill=None)  # LDMatrix; radius ≤ far_bp / 2
     store.proxies(alids, r2=0.8, kb=10_000)         # Proxies
     store.clump(alids, score, r2=..., kb=...)       # Clumps
+    store.variants_in(chrom, start, stop)           # Variants; count_in is its length
+    store.has(alids)                                # bool per ALID
 
 A request the store cannot answer exactly raises `Refusal`, naming its reason. An http(s)
 URL needs the `http` extra (`pip install ogquery[http]`). Building, validating and the

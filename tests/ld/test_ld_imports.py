@@ -38,7 +38,9 @@ EVERY_QUESTION = f"""
 import numpy as np
 import ogquery.ld
 store = ogquery.ld.open({str(TEST_STORE)!r})
-rows = store.region("22", 20_000_000, 5_000_000).variants.alid.tolist()
+rows = store.variants_in("22", 1, 3_000_000_000).alid.tolist()
+assert store.count_in("22", 1, 3_000_000_000) == len(rows)
+assert store.has(rows[:3]).all()
 store.matrix(rows[:50]).kinds()
 store.region("22", 30_000_000, 1_000_000)
 store.proxies(rows[:20], r2=0.5, kb=3000)

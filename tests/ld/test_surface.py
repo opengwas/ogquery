@@ -1,9 +1,9 @@
 """The public surface, pinned signature by signature.
 
 What a caller of `ogquery.ld` sees is pinned here: `ogquery.ld.open`, the queries and their
-results, and the identity functions an LD Store's ALIDs are spelt by. Changing an entry is an
-API change, made on purpose, with a changelog fragment that says so; opengwasdb re-exports these
-names.
+results, the reads of what a store holds (`variants_in`, `count_in`, `has`; ogld#79), and the
+identity functions an LD Store's ALIDs are spelt by. Changing an entry is an API change, made on
+purpose, with a changelog fragment that says so; opengwasdb re-exports these names.
 
 From opengwasdb's `tests/ld/test_surface.py` at `c8ebe4ca` (ogquery#2), less what is
 opengwasdb's: `build`, `validate`, `BuildInputs`, `Finding`, the CLI and the Genotype Store's
@@ -92,6 +92,18 @@ SURFACE: dict[str, tuple[Callable[..., Any], str]] = {
     "ogquery.alid.sorted_alid_locus": (
         alid.sorted_alid_locus,
         "(alid: 'str') -> 'tuple[str, int] | None'",
+    ),
+    "ogquery.ld.LDStore.variants_in": (
+        ogquery.ld.LDStore.variants_in,
+        "(self, chrom: 'str', start: 'int', stop: 'int') -> 'Variants'",
+    ),
+    "ogquery.ld.LDStore.count_in": (
+        ogquery.ld.LDStore.count_in,
+        "(self, chrom: 'str', start: 'int', stop: 'int') -> 'int'",
+    ),
+    "ogquery.ld.LDStore.has": (
+        ogquery.ld.LDStore.has,
+        "(self, alids: 'Sequence[str]') -> 'npt.NDArray[np.bool_]'",
     ),
 }
 @pytest.mark.parametrize("name", sorted(SURFACE))

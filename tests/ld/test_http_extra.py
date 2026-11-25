@@ -66,7 +66,7 @@ def test_a_local_store_reads_without_the_extra() -> None:
     statements = (
         "import ogquery.ld\n"
         f"store = ogquery.ld.open({str(TEST_STORE)!r})\n"
-        "rows = store.region('22', 20_000_000, 5_000_000).variants.alid.tolist()[:40]\n"
+        "rows = store.variants_in('22', 1, 3_000_000_000).alid.tolist()[:40]\n"
         "m = store.matrix(rows)\n"
         "c = store.clump(rows, list(range(40)), r2=0.1, kb=1000)\n"
         "p = store.proxies(rows, r2=0.5, kb=1000)\n"

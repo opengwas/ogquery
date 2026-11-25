@@ -6,6 +6,9 @@ the reader, t_far and the distances the store measured. That keeps the interface
 behind it. Each method delegates to a module of its own, so the tickets that implement
 them (ogld#4: matrices; ogld#6: proxies and clumping) edit different files.
 
+Two reads answer what a store holds before any r is read: `variants_in` (and its count,
+`count_in`) for a region, and `has` for a list of ALIDs (ogld#79; ogquery#2).
+
 An `LDStore` reads through the `Reader` protocol, so a reader of another kind plugs into it:
 opengwasdb's Genotype Store reader, which needs pgenlib and so is not ogquery's (ADR 0002).
 `open` here opens LD Stores and refuses a Genotype Store, naming opengwasdb.
@@ -16,8 +19,10 @@ from __future__ import annotations
 import os
 from collections.abc import Sequence
 
+import numpy as np
 import numpy.typing as npt
 
+from ogquery.identity import normalise_chromosome
 from ogquery.ld.format import InputError, Provenance
 from ogquery.ld.query import clumping, matrices
 from ogquery.ld.query import proxies as proxies_query
@@ -25,6 +30,7 @@ from ogquery.ld.query.kind import GENOTYPE, open_kind
 from ogquery.ld.query.reader import Reader
 from ogquery.ld.query.results import Clumps, LDMatrix, Proxies
 from ogquery.ld.store.reader import StoreReader, opened_ld
+from ogquery.ld.store.tables import Variants
 
 
 class LDStore:
@@ -85,6 +91,48 @@ class LDStore:
         """Clump `alids` by `score`: join at r̂² > r2, within kb × 1,000 bp, as plink2 does."""
         with self._reader.request():
             return clumping.clump(self._reader, alids, score, r2=r2, kb=kb)
+
+    def variants_in(self, chrom: str, start: int, stop: int) -> Variants:
+        """The Variant Set's variants on `chrom` with start ≤ position ≤ stop, in genomic order.
+
+        What a `region` would hold, read from the variant table alone, so a caller can see how
+        large a region is before it asks for its r (ogld#79). It judges no radius: unlike
+        `region`, nothing here reads a pair, so no far_bp limit applies. `chrom` is normalised
+        as `region` normalises it (`chr22` is `22`); a range with start > stop is an
+        `InputError`, never an empty answer.
+        """
+        chrom, start, stop = _range(chrom, start, stop)
+        with self._reader.request():
+            return self._reader.variants(self._reader.rows_in(chrom, start, stop))
+
+    def count_in(self, chrom: str, start: int, stop: int) -> int:
+        """How many variants `variants_in` would return: their positions read, no string column."""
+        chrom, start, stop = _range(chrom, start, stop)
+        with self._reader.request():
+            return len(self._reader.rows_in(chrom, start, stop))
+
+    def has(self, alids: Sequence[str]) -> npt.NDArray[np.bool_]:
+        """Whether the Variant Set holds each ALID, in request order (ogld#79).
+
+        True exactly where `matrix`, `proxies` and `clump` find the ALID present, and False where
+        they report it absent, a malformed ALID included. An indel spelt reference first is
+        refused (`ogquery.alid.ReferenceFirstIndel`), as those queries refuse it, rather than
+        answered False: the store would hold that variant under its sorted ALID.
+        """
+        with self._reader.request():
+            found: npt.NDArray[np.bool_] = self._reader.rows_of(alids) >= 0
+            return found
+
+
+def _range(chrom: str, start: int, stop: int) -> tuple[str, int, int]:
+    """A region's chromosome, normalised, and its whole-number bounds, start ≤ stop; else an
+    `InputError` naming what is wrong."""
+    for name, value in (("start", start), ("stop", stop)):
+        if isinstance(value, bool) or not isinstance(value, int | np.integer):
+            raise InputError(f"{name} is a whole-number position, not {value!r}")
+    if start > stop:
+        raise InputError(f"a region's start is at most its stop: start {start}, stop {stop}")
+    return normalise_chromosome(chrom), int(start), int(stop)
 
 
 def open(location: str | os.PathLike[str], *, cache_bytes: int | None = None) -> LDStore:

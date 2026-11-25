@@ -1,5 +1,5 @@
 """A store served over HTTP answers every query exactly as it does from disk (ld-store §1;
-ogquery#2).
+ogquery#2): the four queries, and the reads of what it holds.
 
 The Test Store's directory is served from this machine by a static Range-serving server
 (`served_store`), as a static host would serve it, and read through the `http` extra.
@@ -31,6 +31,9 @@ def test_every_query_over_http_is_the_local_answer(served_store: str) -> None:
             "region": store.region("21", 30_000_000, 2_000_000).r,
             "proxies": store.proxies(some, r2=0.2, kb=3000).columns(),
             "clump": store.clump(names, z, r2=0.1, kb=3000).columns(),
+            "variants_in": store.variants_in("22", 16_000_000, 30_000_000).columns(),
+            "count_in": store.count_in("21", 1, 3_000_000_000),
+            "has": store.has([*some, "22:1:A:C"]),
         }
 
     here, there = answers(local), answers(remote)
