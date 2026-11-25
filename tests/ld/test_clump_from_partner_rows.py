@@ -364,14 +364,14 @@ def _without_partner_rows(tmp_path: Path) -> Path:
     copy = copy_store(tmp_path / "v010")
     shutil.rmtree(copy / "partners")
     root = copy / "zarr.json"
-    document = __import__("json").loads(root.read_text())
+    document = __import__("json").loads(root.read_text(encoding="utf-8"))
     provenance = document["attributes"]["ld_store"]
     provenance["format_version"] = "0.1.0"
     for key in ("t_partner", "partner_code_floor"):
         provenance.pop(key)
     provenance["counts"].pop("partner_entries", None)
     provenance["software"].pop("zstd", None)
-    root.write_text(__import__("json").dumps(document))
+    root.write_text(__import__("json").dumps(document), encoding="utf-8")
     return copy
 
 

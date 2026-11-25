@@ -537,13 +537,13 @@ def restamped(store_root: Path, chrom: str, number: int, raw: bytes) -> None:
         written.append(written[-1] + len(piece))
     (directory / "frames" / "c" / "0").write_bytes(b"".join(pieces))
     (directory / "frames_idx" / "c" / "0").write_bytes(np.array(written, dtype="<u8").tobytes())
-    meta = json.loads((directory / "frames" / "zarr.json").read_text())
+    meta = json.loads((directory / "frames" / "zarr.json").read_text(encoding="utf-8"))
     meta["shape"] = [written[-1]]
     meta["chunk_grid"]["configuration"]["chunk_shape"] = [written[-1]]
-    (directory / "frames" / "zarr.json").write_text(json.dumps(meta))
-    group = json.loads((directory / "zarr.json").read_text())
+    (directory / "frames" / "zarr.json").write_text(json.dumps(meta), encoding="utf-8")
+    group = json.loads((directory / "zarr.json").read_text(encoding="utf-8"))
     group["attributes"]["frames_bytes"] = written[-1]
-    (directory / "zarr.json").write_text(json.dumps(group))
+    (directory / "zarr.json").write_text(json.dumps(group), encoding="utf-8")
 
 
 def test_a_flipped_byte_in_a_frame_is_refused_naming_the_chromosome_and_the_frame(
@@ -643,9 +643,9 @@ def test_a_truncated_frames_file_is_refused_naming_the_chromosome_and_the_frame(
 def test_a_frames_idx_that_does_not_end_at_frames_bytes_is_refused(test_store: Served) -> None:
     location, copied = test_store
     directory = copied / "partners" / "22"
-    group = json.loads((directory / "zarr.json").read_text())
+    group = json.loads((directory / "zarr.json").read_text(encoding="utf-8"))
     group["attributes"]["frames_bytes"] += 1
-    (directory / "zarr.json").write_text(json.dumps(group))
+    (directory / "zarr.json").write_text(json.dumps(group), encoding="utf-8")
     with pytest.raises(ValueError, match=r"chromosome 22.*frames_idx.*frames_bytes"):
         StoreReader.open(location).partner_row("22", 0)
 
@@ -666,10 +666,10 @@ def offsets_metadata(store_root: Path, chrom: str, *, shape: int, chunk: int) ->
     """The group's `frames_idx` array declared with `shape` offsets in chunks of `chunk`: a store
     whose offsets array is not the one chunk of F + 1 the group's other attributes describe."""
     path = store_root / "partners" / chrom / "frames_idx" / "zarr.json"
-    meta = json.loads(path.read_text())
+    meta = json.loads(path.read_text(encoding="utf-8"))
     meta["shape"] = [shape]
     meta["chunk_grid"]["configuration"]["chunk_shape"] = [chunk]
-    path.write_text(json.dumps(meta))
+    path.write_text(json.dumps(meta), encoding="utf-8")
 
 
 @pytest.mark.parametrize(("shape", "chunk"), [(36, 36), (38, 36)])
@@ -699,9 +699,9 @@ def test_a_frames_idx_that_does_not_ascend_is_refused(test_store: Served) -> Non
 def set_attribute(store_root: Path, chrom: str, name: str, value: object) -> None:
     """The group's `name` attribute set to `value`: a store whose own record of itself is wrong."""
     path = store_root / "partners" / chrom / "zarr.json"
-    meta = json.loads(path.read_text())
+    meta = json.loads(path.read_text(encoding="utf-8"))
     meta["attributes"][name] = value
-    path.write_text(json.dumps(meta))
+    path.write_text(json.dumps(meta), encoding="utf-8")
 
 
 def test_a_group_that_records_no_frames_bytes_is_refused(test_store: Served) -> None:
@@ -737,10 +737,10 @@ def test_a_frames_array_that_is_not_one_chunk_of_the_recorded_bytes_is_refused(
     the array and the bytes the group records."""
     location, copied = test_store
     path = copied / "partners" / "22" / "frames" / "zarr.json"
-    meta = json.loads(path.read_text())
+    meta = json.loads(path.read_text(encoding="utf-8"))
     meta["shape"] = [44_000]
     meta["chunk_grid"]["configuration"]["chunk_shape"] = [44_000]
-    path.write_text(json.dumps(meta))
+    path.write_text(json.dumps(meta), encoding="utf-8")
     with pytest.raises(ValueError, match=r"partners/22/frames is shape .*not one chunk"):
         StoreReader.open(location).partner_row("22", 0)
 
@@ -771,14 +771,14 @@ def test_a_0_1_0_store_is_refused_naming_the_missing_component(tmp_path: Path) -
     copied = tmp_path / "store"
     copy_store(copied)
     root = copied / "zarr.json"
-    provenance = json.loads(root.read_text())
+    provenance = json.loads(root.read_text(encoding="utf-8"))
     recorded = provenance["attributes"]["ld_store"]
     recorded["format_version"] = "0.1.0"
     for key in PARTNER_KEYS:
         del recorded[key]
     del recorded["software"]["zstd"]
     del recorded["counts"]["partner_entries"]
-    root.write_text(json.dumps(provenance))
+    root.write_text(json.dumps(provenance), encoding="utf-8")
     reader = StoreReader.open(copied)
     assert reader.provenance["format_version"] == "0.1.0", "the copy is a 0.1.0 store"
     with pytest.raises(InputError, match=r"Partner Rows"):

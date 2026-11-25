@@ -32,9 +32,8 @@ _Pairs = tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int6
 
 
 def provenance(store: Path) -> dict[str, object]:
-    found: dict[str, object] = json.loads((store / "zarr.json").read_text())["attributes"][
-        "ld_store"
-    ]
+    document = json.loads((store / "zarr.json").read_text(encoding="utf-8"))
+    found: dict[str, object] = document["attributes"]["ld_store"]
     return found
 
 

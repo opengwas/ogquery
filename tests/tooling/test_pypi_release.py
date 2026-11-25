@@ -312,7 +312,7 @@ def test_the_plan_command_writes_the_owed_tags(
     monkeypatch.setattr(pypi, "PYPI_FIRST_RELEASE", "v0.12.1")
     out = tmp_path / "plan.json"
     assert pypi.main(["plan", "--index", "pypi", "--json-out", str(out)]) == 0
-    entries = json.loads(out.read_text())
+    entries = json.loads(out.read_text(encoding="utf-8"))
     # Each entry is one leg of the workflow's matrix: strings, nothing else.
     assert entries == [
         {"tag": "v0.12.1", "version": "0.12.1", "commit": "c" * 40},

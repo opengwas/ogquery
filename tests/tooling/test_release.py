@@ -610,7 +610,7 @@ def stub_gh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """
     state = tmp_path / "gh-state.json"
     state.write_text(
-        json.dumps({"releases": ["v0.3.0"], "prs": {}, "fail_create": False})
+        json.dumps({"releases": ["v0.3.0"], "prs": {}, "fail_create": False}), encoding="utf-8"
     )
     log = tmp_path / "gh.log"
     install_stub(tmp_path / "bin", "gh", STUB_GH, monkeypatch)

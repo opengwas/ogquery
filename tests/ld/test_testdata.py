@@ -216,7 +216,7 @@ def test_cached_results_cannot_be_changed_by_a_test() -> None:
 
 
 def test_the_manifest_names_no_host_path() -> None:
-    text = (td.TEST_PANEL / "manifest.json").read_text()
+    text = (td.TEST_PANEL / "manifest.json").read_text(encoding="utf-8")
     for host in ("/home/", "/data/opengwasdb", "scratchpad", "/tmp/"):
         assert host not in text, host
 

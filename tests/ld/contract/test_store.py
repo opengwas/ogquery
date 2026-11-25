@@ -57,9 +57,9 @@ def with_provenance(tmp_path: Path, edit: Callable[[dict[str, Any]], None]) -> P
     copy = tmp_path / "store"
     shutil.copytree(support.TEST_STORE, copy)
     meta = copy / "zarr.json"
-    doc = json.loads(meta.read_text())
+    doc = json.loads(meta.read_text(encoding="utf-8"))
     edit(doc["attributes"]["ld_store"])
-    meta.write_text(json.dumps(doc))
+    meta.write_text(json.dumps(doc), encoding="utf-8")
     return copy
 
 

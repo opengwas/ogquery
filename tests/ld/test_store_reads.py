@@ -464,9 +464,9 @@ def test_a_lost_chunk_of_any_array_is_refused_never_read_as_data(
 
 def set_fill(store: Path, path: str, fill: object) -> None:
     meta = store / path / "zarr.json"
-    doc = json.loads(meta.read_text())
+    doc = json.loads(meta.read_text(encoding="utf-8"))
     doc["fill_value"] = fill
-    meta.write_text(json.dumps(doc))
+    meta.write_text(json.dumps(doc), encoding="utf-8")
 
 
 def a_far_pair(chrom: str) -> tuple[int, int]:
@@ -524,7 +524,8 @@ def test_an_array_whose_fill_valid_data_can_hold_is_refused(
 def test_an_r_array_whose_lost_chunk_would_read_as_a_number_is_refused(tmp_path: Path) -> None:
     copy = copy_store(tmp_path / "store")
     meta = copy / "near" / "22" / "r" / "zarr.json"
-    meta.write_text(meta.read_text().replace('"fill_value": -32768', '"fill_value": 0'))
+    text = meta.read_text(encoding="utf-8")
+    meta.write_text(text.replace('"fill_value": -32768', '"fill_value": 0'), encoding="utf-8")
     # A region whose r is read: one with no variant reads none, and answers 0 × 0 (ogquery#2).
     assert ogquery.ld.open(copy).count_in("22", 29_000_000, 31_000_000) > 1
     with pytest.raises(ValueError, match=r"near/22/r has the fill value 0, which valid data"):

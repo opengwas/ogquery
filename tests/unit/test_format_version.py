@@ -42,7 +42,7 @@ def dense_store_path(tmp_path: Path) -> Path:
 
 def _set_version(store: Path, version: str) -> None:
     manifest_path = store / "manifest.json"
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["format_version"] = version
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 

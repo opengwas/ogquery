@@ -239,7 +239,7 @@ def expected_from_repository(root: Path) -> Expected:
     files = frozenset(name for name in tracked.split("\0") if name)
     if not files:
         raise DistributionError(f"git tracks nothing under {root / PACKAGE}")
-    pyproject = tomllib.loads((root / "pyproject.toml").read_text())
+    pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     project = pyproject["project"]
     includes = pyproject["tool"]["hatch"]["build"]["targets"]["sdist"]["include"]
     return Expected(

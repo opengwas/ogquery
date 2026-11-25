@@ -35,10 +35,10 @@ def test_an_encoding_the_reader_does_not_implement_is_refused_at_open_naming_it(
 ) -> None:
     copy = copy_store(tmp_path / "store")
     meta = copy / "zarr.json"
-    doc = json.loads(meta.read_text())
+    doc = json.loads(meta.read_text(encoding="utf-8"))
     recorded: dict[str, Any] = doc["attributes"]["ld_store"]["encoding"]
     recorded.update(UNIMPLEMENTED[case])
-    meta.write_text(json.dumps(doc))
+    meta.write_text(json.dumps(doc), encoding="utf-8")
     with pytest.raises(ogquery.ld.InputError) as refused:
         ogquery.ld.open(copy)
     assert repr(recorded) in str(refused.value), refused.value
