@@ -9,7 +9,7 @@ builder and validator, the Data API (ogdb-api), opengwaspy and opengwasr all use
   Python 3.12 to 3.14.
 - **Reads** Store Releases of format `0.3.0` on its own, and `0.2.x` ones when
   given a reader for their Store Variant Table (below).
-- **Contract:** the Store Reader contract bundle (`tests/contract/`): nine
+- **Contract:** the Store Reader contract bundle (`tests/contract/`): eleven
   small releases and what the Store Reader must answer on each, which any
   reader, including a future Rust core shipped inside the same wheels, must
   reproduce.

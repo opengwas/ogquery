@@ -1,0 +1,5 @@
+A Hybrid release's Rho reads come from its Dense Component's Rho Matrix (opengwasdb#495, #496; opengwasdb PR #500; ADR 0001's rule for a change made before opengwasdb#475). `rho()`, `rho_row()` and `rho_matrix()` on a Hybrid refuse an Overflow-only Analysis by name (`OverflowOnlyAnalysisError`) and never answer a NaN for it.
+
+**Breaking:** a Hybrid's Rho Matrix built before opengwasdb #496, which has no `overflow_only` record, now raises `ValueError` naming `overflow_only` instead of answering. Rebuild it with opengwasdb at or after the #496 release (`opengwasdb build-dense-rho` on the Hybrid release). The reader checks the record's syntax (a list of distinct, ascending, in-range integers), not its membership: a well-formed but false `overflow_only: []` still answers NaN.
+
+The release digests carry a `rho` section (`ogquery.digests`). The contract bundle is refreshed to opengwasdb `355449d7` (bundle 2): a Rho Matrix on the Dense and Hybrid releases and two new releases, `dense_rho` and `hybrid_overflow_only`, so ogquery's Rho readers are now under the contract. The public-name list is regenerated from `355449d7`. This gives 0.4.0.

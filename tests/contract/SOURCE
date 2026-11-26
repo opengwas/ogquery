@@ -3,5 +3,5 @@
 # `python scripts/contract_bundle.py check` (pixi: contract-check), and CI, hold it.
 # Refresh with `python scripts/contract_bundle.py refresh --commit <sha>` (README.md).
 repository https://github.com/opengwas/opengwasdb.git
-commit c8ebe4ca2e7697f3b723fd89ebb645bb1d221fd4
+commit 355449d7397f0e50664e48e5bcf0bd3880bda2e2
 path tests/store_reader_contract

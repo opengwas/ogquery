@@ -5,7 +5,7 @@ A name is public when a module's `__all__` lists it or a top-level definition or
 assignment (tuple unpacking included) does not start with an underscore. Run it on an
 unpacked `git archive` of the opengwasdb commit, never on a live checkout:
 
-    git -C <opengwasdb> archive c8ebe4ca2e7697f3b723fd89ebb645bb1d221fd4 \\
+    git -C <opengwasdb> archive 355449d7397f0e50664e48e5bcf0bd3880bda2e2 \\
         opengwasdb/store_reader opengwasdb/store/query_digests.py | tar -x -C <dir>
     python scripts/public_names.py <dir>
 
