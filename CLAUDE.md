@@ -16,6 +16,9 @@ than degrade quietly, and never substitute a default for missing data.
   even inside a function. `tests/unit/test_store_reader_imports.py` fails otherwise. A
   test may use scipy as a reference; the package may not. Reading over HTTP needs fsspec
   and aiohttp, the `http` extra, which zarr imports: ogquery only checks they are there.
+  The one exception: `ogquery/ld/genotypes/` alone imports pgenlib and threadpoolctl, the
+  `genotype` extra, to read a Genotype Store; `import ogquery`, `import ogquery.ld` and
+  every other Store's read load neither (ADR 0002, amended).
 - **The contract bundle** (`tests/contract/`) is opengwasdb's and read only. Never edit
   `releases/` or `expected/` to make a test pass: a failing contract is a wrong answer.
   `tests/contract/README.md` says how to refresh it from opengwasdb. The LD test data
@@ -25,6 +28,7 @@ than degrade quietly, and never substitute a default for missing data.
 
 ```bash
 pixi run -e test test              # the whole suite, about two minutes
+pixi run -e test-nogenotype test -m "not genotype"   # without the `genotype` extra
 pixi run -e dev lint               # ruff
 pixi run -e dev typecheck          # mypy --strict
 pixi run -e dev python …           # anything ad hoc

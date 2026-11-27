@@ -1,5 +1,6 @@
 """`.github/floors.txt` pins each runtime dependency at pyproject.toml's floor, and
-`.github/floors-http.txt` each dependency of the `http` extra at its floor.
+`.github/floors-http.txt` and `floors-genotype.txt` each dependency of the `http` and `genotype`
+extras at its floor.
 
 CI's `floors` job installs those pins and runs the suite, so a floor pyproject.toml
 promises is one the Store Reader was tested on. Here, the files agree.
@@ -51,3 +52,19 @@ def test_every_http_floor_is_pinned_exactly_at_the_declared_floor():
     assert set(pinned) == set(declared) == {"fsspec", "aiohttp"}
     for name, floor in declared.items():
         assert _release(pinned[name]) == _release(floor), (name, floor, pinned[name])
+
+
+def test_every_genotype_floor_is_pinned_exactly_at_the_declared_floor():
+    declared, pinned = _floors_declared("genotype"), _floors_pinned("floors-genotype.txt")
+    assert set(pinned) == set(declared) == {"pgenlib", "threadpoolctl"}
+    for name, floor in declared.items():
+        assert _release(pinned[name]) == _release(floor), (name, floor, pinned[name])
+
+
+def test_dev_carries_the_genotype_extra_where_pgenlib_has_wheels():
+    # `dev` names the two modules itself, under a marker, rather than `ogquery[genotype]`: pixi
+    # drops a marker on a self-reference, and a Windows dev environment would compile pgenlib.
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    extras = project["optional-dependencies"]
+    marked = {f"{spec}; sys_platform != 'win32'" for spec in extras["genotype"]}
+    assert marked <= set(extras["dev"]), extras["dev"]

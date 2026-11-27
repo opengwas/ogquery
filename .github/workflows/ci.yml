@@ -4,13 +4,17 @@ name: CI
 #
 #   tests              the contract bundle (at its cross-machine tolerance), the
 #                      import-boundary test, the LD read path (with the `http` extra,
-#                      its HTTP tests against a locally served Test Store) and the unit
-#                      tests, on Linux, macOS and Windows, each on the lowest and
+#                      its HTTP tests against a locally served Test Store; with the
+#                      `genotype` extra on Linux and macOS, the Genotype Store's) and the
+#                      unit tests, on Linux, macOS and Windows, each on the lowest and
 #                      highest Python supported;
-#   floors             the same tests at the lowest numpy, zarr, numcodecs, fsspec and
-#                      aiohttp allowed;
+#   floors             the same tests at the lowest numpy, zarr, numcodecs, fsspec,
+#                      aiohttp, pgenlib and threadpoolctl allowed;
 #   no http extra      without fsspec and aiohttp: an http(s) open names `ogquery[http]`,
 #                      and local LD Stores answer their golden reads (ogquery#2);
+#   no genotype extra  without pgenlib and threadpoolctl: opening a Genotype Store names
+#                      `ogquery[genotype]`, and the whole suite but the Genotype Store's
+#                      tests passes (opengwas/ogquery#11);
 #   lint               ruff, and mypy --strict on ogquery/ and scripts/;
 #   distributions      the source archive and the wheel, built as a release builds them,
 #                      and a strict-mypy caller of the installed wheel (py.typed);
@@ -67,10 +71,18 @@ jobs:
           python-version: ${{ matrix.python }}
           allow-prereleases: true
 
-      - name: Install ogquery, its http extra and the test tools
+      # The `genotype` extra where pgenlib publishes wheels: Linux and macOS. It publishes no
+      # Windows wheel, so there the tests marked `genotype` are skipped, naming the platform
+      # (tests/ld/conftest.py), and `-rs` below prints why (ADR 0002, amended).
+      - name: Install ogquery, its http and genotype extras and the test tools
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[test,http]"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            python -m pip install -e ".[test,http]"
+          else
+            python -m pip install --only-binary=pgenlib -e ".[test,http,genotype]"
+            python -c "import pgenlib, threadpoolctl"
+          fi
           python -m pip check
 
       # The bundle and the LD test data are bytes: .gitattributes keeps a Windows checkout
@@ -84,13 +96,13 @@ jobs:
       # The tests marked `boundary` (pyproject.toml), in a step of their own so a boundary
       # failure is named; every step after leaves them out, so each runs once a leg.
       - name: The import boundary
-        run: python -m pytest -v -m boundary tests/unit tests/ld
+        run: python -m pytest -v -rs -m boundary tests/unit tests/ld
 
       # The LD Test Stores against their golden data, locally and served over HTTP from this
-      # machine, and zarr's configuration after LD reads (tests/ld/test_zarr_config.py;
-      # ogquery#2).
-      - name: The LD read path, and zarr's configuration after it
-        run: python -m pytest -m "not boundary" tests/ld
+      # machine, zarr's configuration after LD reads (tests/ld/test_zarr_config.py;
+      # ogquery#2), and the Genotype Store against opengwasdb's answers (opengwas/ogquery#11).
+      - name: The LD read path, the Genotype Store, and zarr's configuration after them
+        run: python -m pytest -rs -m "not boundary" tests/ld
 
       - name: The unit and tooling tests
         run: python -m pytest -m "not boundary" tests/unit tests/tooling
@@ -116,15 +128,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      # The `http` extra at its floors too (.github/floors-http.txt).
+      # The `http` and `genotype` extras at their floors too (.github/floors-http.txt,
+      # .github/floors-genotype.txt).
       - name: Install ogquery at its floors
         run: |
           python -m pip install --upgrade pip
           python -m pip install --only-binary=:all: -c .github/floors.txt \
-            -c .github/floors-http.txt -e ".[test,http]"
+            -c .github/floors-http.txt -c .github/floors-genotype.txt -e ".[test,http,genotype]"
           python -m pip check
           python -c "import numpy, zarr, numcodecs; print(numpy.__version__, zarr.__version__, numcodecs.__version__)"
           python -c "import fsspec, aiohttp; print(fsspec.__version__, aiohttp.__version__)"
+          python -c "import importlib.metadata as m; print(m.version('pgenlib'), m.version('threadpoolctl'))"
 
       - name: The contract, the import boundary, the LD read path and the unit tests
         run: python -m pytest tests/contract tests/unit tests/ld
@@ -164,10 +178,46 @@ jobs:
 
       - name: Dependency isolation, and local golden reads
         run: >-
-          python -m pytest -m "not http"
+          python -m pytest -m "not http and not genotype"
           tests/ld/test_http_extra.py tests/ld/test_ld_imports.py tests/ld/test_zarr_config.py
           tests/ld/contract/test_query.py tests/ld/contract/test_store.py
           tests/ld/test_matrix_region_unchanged.py tests/ld/test_public_reads.py
+
+  # Without the `genotype` extra (opengwas/ogquery#11): pgenlib and threadpoolctl are not
+  # installed, opening a Genotype Store raises GenotypeExtraMissing naming
+  # `ogquery[genotype]`, and every other test -- the contract bundle's GWAS Stores, the LD
+  # Stores, the import boundary, the unit and tooling tests -- passes. Only the tests marked
+  # `genotype`, which read a Genotype Store, are left out; `tests` runs them with the extra.
+  no-genotype:
+    name: tests without the genotype extra
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONNOUSERSITE: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      HYPOTHESIS_PROFILE: ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ogquery, its http extra and the test tools, not the genotype extra
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test,http]"
+          python -m pip check
+
+      - name: Neither pgenlib nor threadpoolctl is installed
+        run: |
+          python -c "import importlib.util as u, sys; found = [m for m in ('pgenlib', 'threadpoolctl') if u.find_spec(m)]; print(found); sys.exit(bool(found))"
+
+      - name: Every Store but a Genotype Store, and the missing extra named
+        run: python -m pytest -m "not genotype" tests
 
   lint:
     name: lint and typecheck

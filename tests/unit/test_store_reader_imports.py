@@ -1,4 +1,5 @@
-"""ogquery imports numpy, zarr, numcodecs, the standard library and itself (#464, ogquery#1).
+"""ogquery imports numpy, zarr, numcodecs, the standard library and itself (#464, ogquery#1),
+and `ogquery.ld.genotypes` the `genotype` extra besides (opengwas/ogquery#11).
 
 ogquery is the read path every reader of a Store Release uses, and installs on Linux,
 macOS and Windows with nothing to compile only while nothing in it reaches for a heavy
@@ -7,12 +8,16 @@ dependency. Four checks hold that:
 - the static one parses every module of the package and refuses any import -- at
   module level, inside a function or under `TYPE_CHECKING`, which all couple a file to
   what it names -- outside numpy, zarr, numcodecs, the standard library less `sqlite3`,
-  and `ogquery` itself;
+  and `ogquery` itself; under `ogquery/ld/genotypes/` alone it also allows pgenlib and
+  threadpoolctl, the `genotype` extra, which a Genotype Store's reader needs (ADR 0002,
+  amended);
 - the declared one requires `pyproject.toml`'s runtime dependencies to be exactly
-  numpy, zarr and numcodecs, so the static check and what pip installs agree;
-- the run-time one imports every module in a fresh interpreter and requires that
-  pysam, sqlite3, scipy, pandas and threadpoolctl were never loaded, which the static
-  check cannot see through a dependency's own imports;
+  numpy, zarr and numcodecs, and the `genotype` extra exactly what that package
+  imports, so the static check and what pip installs agree;
+- the run-time one imports every module but the genotype package's in a fresh
+  interpreter, and queries a GWAS release, and requires that pysam, sqlite3, scipy,
+  pandas, pgenlib and threadpoolctl were never loaded, which the static check cannot
+  see through a dependency's own imports;
 - and the probe is shown to see a heavy import when one happens.
 
 Asking every query shape of a release in a fresh interpreter is the contract's
@@ -40,7 +45,10 @@ PACKAGE = "ogquery"
 OWN = "ogquery"
 THIRD_PARTY = frozenset({"numpy", "zarr", "numcodecs"})
 REFUSED_STDLIB = frozenset({"sqlite3"})
-HEAVY = ("pandas", "scipy", "pysam", "sqlite3", "threadpoolctl")
+#: The `genotype` extra, and the one package that may import it: a Genotype Store's reader.
+GENOTYPE_EXTRA = frozenset({"pgenlib", "threadpoolctl"})
+GENOTYPE_PACKAGE = f"{PACKAGE}/ld/genotypes/"
+HEAVY = ("pandas", "scipy", "pysam", "sqlite3", "pgenlib", "threadpoolctl")
 
 
 def imports_in_source(path: str, source: str) -> set[str]:
@@ -75,6 +83,8 @@ def foreign_imports(path: str, source: str) -> list[str]:
         if name == OWN or name.startswith(OWN + "."):
             continue
         if top in THIRD_PARTY:
+            continue
+        if top in GENOTYPE_EXTRA and path.startswith(GENOTYPE_PACKAGE):
             continue
         if top in sys.stdlib_module_names and top not in REFUSED_STDLIB:
             continue
@@ -116,6 +126,16 @@ def test_the_check_refuses_what_it_should():
     ]
 
 
+def test_the_check_allows_the_genotype_extra_only_in_the_genotype_package():
+    source = "import pgenlib\nfrom threadpoolctl import threadpool_limits\n"
+    assert foreign_imports(f"{GENOTYPE_PACKAGE}reader.py", source) == []
+    assert foreign_imports(f"{PACKAGE}/ld/query/ldstore.py", source) == [
+        "pgenlib",
+        "threadpoolctl.threadpool_limits",
+    ]
+    assert foreign_imports(f"{PACKAGE}/ld/genotypes.py", source) != [], "a module beside it"
+
+
 def test_ogquery_imports_only_numpy_zarr_numcodecs_stdlib_and_itself():
     sources = package_sources()
     # The Store Reader is some 11,000 lines in 41 modules; a check over a handful of
@@ -134,6 +154,21 @@ def test_the_package_declares_exactly_the_three_dependencies_it_imports():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     declared = {re.split(r"[<>=!~\[; ]", spec, maxsplit=1)[0] for spec in project["dependencies"]}
     assert declared == THIRD_PARTY
+
+
+def test_the_genotype_extra_is_exactly_what_the_genotype_package_imports():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    extra = project["optional-dependencies"]["genotype"]
+    declared = {re.split(r"[<>=!~\[; ]", spec, maxsplit=1)[0] for spec in extra}
+    assert declared == GENOTYPE_EXTRA
+    assert not any(";" in spec for spec in extra), "no platform marker: pip decides (ADR 0002)"
+    imported = {
+        name.split(".")[0]
+        for path, source in package_sources().items()
+        if path.startswith(GENOTYPE_PACKAGE)
+        for name in imports_in_source(path, source)
+    }
+    assert GENOTYPE_EXTRA <= imported, "each module the extra installs is one the package reads"
 
 
 def _loaded_after(statements: str) -> list[str]:
@@ -155,10 +190,24 @@ def test_importing_ogquery_loads_no_heavy_dependency():
     modules = sorted(
         path[: -len(".py")].replace("/", ".").removesuffix(".__init__")
         for path in package_sources()
+        if not path.startswith(GENOTYPE_PACKAGE)
     )
-    assert {"ogquery.facade", "ogquery.digests", "ogquery.release"} <= set(modules)
+    assert {"ogquery.facade", "ogquery.digests", "ogquery.release", "ogquery.ld"} <= set(modules)
     statements = f"for name in {modules!r}:\n    importlib.import_module(name)\n"
     statements += "import ogquery\nogquery.__version__\n"
+    assert _loaded_after(statements) == []
+
+
+def test_querying_a_gwas_release_loads_no_heavy_dependency():
+    """A GWAS release opened and asked a question loads neither the `genotype` extra nor any
+    other heavy module (the contract asks every question; its list predates pgenlib)."""
+    release = ROOT / "tests" / "contract" / "releases" / "dense_ranges"
+    statements = (
+        "from ogquery.facade import query_release\n"
+        "from ogquery.release import open_release\n"
+        f"with query_release(open_release({str(release)!r})) as q:\n"
+        "    assert len(q.variants_table())\n"
+    )
     assert _loaded_after(statements) == []
 
 
