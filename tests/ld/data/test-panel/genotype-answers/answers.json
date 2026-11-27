@@ -1,0 +1,255 @@
+{
+ "clump": {
+  "absent": [
+   "absent"
+  ],
+  "r2": 0.01,
+  "type": "Clumps",
+  "window_bp": 3000000
+ },
+ "matrix": {
+  "absent": [
+   "absent"
+  ],
+  "far_bp": 10000000,
+  "fill": null,
+  "near_bp": 3000000,
+  "t_far": 0.027421052631578947,
+  "type": "LDMatrix",
+  "variants.type": "Variants"
+ },
+ "proxies": {
+  "absent": [
+   "absent"
+  ],
+  "r2_min": 0.01,
+  "t_far": 0.027421052631578947,
+  "type": "Proxies",
+  "window_bp": 3000000
+ },
+ "refused-closed": {
+  "refusal": {
+   "message": "<store>: ALID companion {'generation': '848ee8398cea96f0af54276e4f494847cef954c19ce920e1595806bee7c302e2'}, manifest.json: reader has been released",
+   "raised": "InputError",
+   "reason": null
+  }
+ },
+ "refused-clump--1-10": {
+  "refusal": {
+   "message": "refused (invalid): r2 must be in [0, 1] and the window finite and \u2265 0: r2=-1, W=10000 bp",
+   "raised": "Refusal",
+   "reason": "invalid"
+  }
+ },
+ "refused-clump-0.001-3000": {
+  "refusal": {
+   "message": "refused (threshold_below_t_partner): r2=0.001 is below the t_partner=0.01 <store> records, over a window within 3,000,000 bp: its Partner Rows hold only the pairs at or above the Partner Floor, and a row's absence there decides nothing below it. Ask at r2 \u2265 0.01, or read a store derived at a lower Partner Threshold (ld-store \u00a79; partner-rows \u00a78.1)",
+   "raised": "Refusal",
+   "reason": "threshold_below_t_partner"
+  }
+ },
+ "refused-clump-0.01-5000": {
+  "refusal": {
+   "message": "refused (threshold_below_t_far): r2=0.01 is below t_far=0.027421052631578947: beyond 3,000,000 bp the store holds only the Bound r\u00b2 < t_far for unstored pairs, which does not decide r\u0302\u00b2 \u2265 r2",
+   "raised": "Refusal",
+   "reason": "threshold_below_t_far"
+  }
+ },
+ "refused-clump-0.1--1": {
+  "refusal": {
+   "message": "refused (invalid): r2 must be in [0, 1] and kb finite and \u2265 0: r2=0.1, kb=-1",
+   "raised": "Refusal",
+   "reason": "invalid"
+  }
+ },
+ "refused-clump-0.1-10001": {
+  "refusal": {
+   "message": "refused (window_over_far): a 10,001,000 bp window reaches past 10,000,000 bp, where pairs are Not Measured",
+   "raised": "Refusal",
+   "reason": "window_over_far"
+  }
+ },
+ "refused-clump-0.1-inf": {
+  "refusal": {
+   "message": "refused (invalid): r2 must be in [0, 1] and kb finite and \u2265 0: r2=0.1, kb=inf",
+   "raised": "Refusal",
+   "reason": "invalid"
+  }
+ },
+ "refused-clump-nan-10": {
+  "refusal": {
+   "message": "refused (invalid): r2 must be in [0, 1] and the window finite and \u2265 0: r2=nan, W=10000 bp",
+   "raised": "Refusal",
+   "reason": "invalid"
+  }
+ },
+ "refused-lead-outside-its-window": {
+  "refusal": {
+   "message": "<store>: the lead 21:15498776:A:C is not among its window's rows",
+   "raised": "InputError",
+   "reason": null
+  }
+ },
+ "refused-pin-missing": {
+  "refusal": {
+   "message": "<store>/missing-panel.pgen: recorded genotype input is missing or unreadable: [Errno 2] No such file or directory: '<store>/missing-panel.pgen'",
+   "raised": "InputError",
+   "reason": null
+  }
+ },
+ "refused-pin-mtime_ns": {
+  "refusal": {
+   "message": "<store>/../panel.pgen: mtime_ns changed: recorded 1795726371000000001, found 1795726371000000000",
+   "raised": "InputError",
+   "reason": null
+  }
+ },
+ "refused-pin-size": {
+  "refusal": {
+   "message": "<store>/../panel.pgen: size changed: recorded 149060, found 149059",
+   "raised": "InputError",
+   "reason": null
+  }
+ },
+ "refused-proxies--1-10": {
+  "refusal": {
+   "message": "refused (invalid): r2 must be in [0, 1] and the window finite and \u2265 0: r2=-1, W=10000 bp",
+   "raised": "Refusal",
+   "reason": "invalid"
+  }
+ },
+ "refused-proxies-0.001-3000": {
+  "refusal": {
+   "message": "refused (threshold_below_t_partner): r2=0.001 is below the t_partner=0.01 <store> records, over a window within 3,000,000 bp: its Partner Rows hold only the pairs at or above the Partner Floor, and a row's absence there decides nothing below it. Ask at r2 \u2265 0.01, or read a store derived at a lower Partner Threshold (ld-store \u00a79; partner-rows \u00a78.1)",
+   "raised": "Refusal",
+   "reason": "threshold_below_t_partner"
+  }
+ },
+ "refused-proxies-0.01-5000": {
+  "refusal": {
+   "message": "refused (threshold_below_t_far): r2=0.01 is below t_far=0.027421052631578947: beyond 3,000,000 bp the store holds only the Bound r\u00b2 < t_far for unstored pairs, which does not decide r\u0302\u00b2 \u2265 r2",
+   "raised": "Refusal",
+   "reason": "threshold_below_t_far"
+  }
+ },
+ "refused-proxies-0.1--1": {
+  "refusal": {
+   "message": "refused (invalid): r2 must be in [0, 1] and kb finite and \u2265 0: r2=0.1, kb=-1",
+   "raised": "Refusal",
+   "reason": "invalid"
+  }
+ },
+ "refused-proxies-0.1-10001": {
+  "refusal": {
+   "message": "refused (window_over_far): a 10,001,000 bp window reaches past 10,000,000 bp, where pairs are Not Measured",
+   "raised": "Refusal",
+   "reason": "window_over_far"
+  }
+ },
+ "refused-proxies-0.1-inf": {
+  "refusal": {
+   "message": "refused (invalid): r2 must be in [0, 1] and kb finite and \u2265 0: r2=0.1, kb=inf",
+   "raised": "Refusal",
+   "reason": "invalid"
+  }
+ },
+ "refused-proxies-nan-10": {
+  "refusal": {
+   "message": "refused (invalid): r2 must be in [0, 1] and the window finite and \u2265 0: r2=nan, W=10000 bp",
+   "raised": "Refusal",
+   "reason": "invalid"
+  }
+ },
+ "refused-region--1": {
+  "refusal": {
+   "message": "refused (invalid): a radius is a distance, so never negative: -1",
+   "raised": "Refusal",
+   "reason": "invalid"
+  }
+ },
+ "refused-region-5000001": {
+  "refusal": {
+   "message": "refused (region_over_far): a region 10,000,002 bp wide is wider than the 10,000,000 bp the store measured",
+   "raised": "Refusal",
+   "reason": "region_over_far"
+  }
+ },
+ "refused-score-inf": {
+  "refusal": {
+   "message": "refused (invalid): a score must be finite and \u2265 0 (|z| or \u2212log10 p)",
+   "raised": "Refusal",
+   "reason": "invalid"
+  }
+ },
+ "refused-score-nan": {
+  "refusal": {
+   "message": "refused (invalid): a score must be finite and \u2265 0 (|z| or \u2212log10 p)",
+   "raised": "Refusal",
+   "reason": "invalid"
+  }
+ },
+ "refused-score-negative": {
+  "refusal": {
+   "message": "refused (invalid): a score must be finite and \u2265 0 (|z| or \u2212log10 p)",
+   "raised": "Refusal",
+   "reason": "invalid"
+  }
+ },
+ "refused-score-two": {
+  "refusal": {
+   "message": "refused (invalid): a score is one number per ALID: 1 ALIDs, score of shape (2,)",
+   "raised": "Refusal",
+   "reason": "invalid"
+  }
+ },
+ "refused-wrong-kind-genotype-reader-on-an-ld-store": {
+  "refusal": {
+   "message": "<test-store>: not a Genotype Store: missing genotype_store or found ld_store",
+   "raised": "InputError",
+   "reason": null
+  }
+ },
+ "refused-wrong-kind-ld-reader-on-a-genotype-store": {
+  "refusal": {
+   "message": "<store> has no ld_store provenance: it is not a finished LD Store",
+   "raised": "InputError",
+   "reason": null
+  }
+ },
+ "region-20000000-0.0": {
+  "absent": [],
+  "far_bp": 10000000,
+  "fill": 0.0,
+  "near_bp": 3000000,
+  "t_far": 0.027421052631578947,
+  "type": "LDMatrix",
+  "variants.type": "Variants"
+ },
+ "region-20000000-None": {
+  "absent": [],
+  "far_bp": 10000000,
+  "fill": null,
+  "near_bp": 3000000,
+  "t_far": 0.027421052631578947,
+  "type": "LDMatrix",
+  "variants.type": "Variants"
+ },
+ "region-25000000-0.0": {
+  "absent": [],
+  "far_bp": 10000000,
+  "fill": 0.0,
+  "near_bp": 3000000,
+  "t_far": 0.027421052631578947,
+  "type": "LDMatrix",
+  "variants.type": "Variants"
+ },
+ "region-25000000-None": {
+  "absent": [],
+  "far_bp": 10000000,
+  "fill": null,
+  "near_bp": 3000000,
+  "t_far": 0.027421052631578947,
+  "type": "LDMatrix",
+  "variants.type": "Variants"
+ }
+}
