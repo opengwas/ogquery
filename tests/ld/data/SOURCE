@@ -3,8 +3,9 @@
 # copy, read only, as it holds tests/contract. Each `file` line is one file of that commit, byte
 # for byte, at the same path in both repositories: its git blob id there, and its path.
 # tests/ld/test_source.py holds every file listed to its blob id, and every file under
-# tests/ld/data/ to a line. opengwasdb's Test Panel also holds the genotypes, PC File and dosages
-# (panel.pgen, .psam, .keep, pcs.eigenvec, dosages.raw); its build tests read them, these do not.
+# tests/ld/data/ to a line. opengwasdb's Test Panel also holds the PC File, keep list and dosages
+# (pcs.eigenvec, panel.keep, dosages.raw); its build tests read them, these do not. The genotypes
+# (panel.pgen, .psam) are here for the Genotype Store generated below, which reads them.
 # Refresh by copying the same paths from a later opengwasdb commit and rewriting the lines from
 # `git ls-tree -r <commit> tests/ld/data tests/ld/testdata.py` there.
 repository https://github.com/opengwas/opengwasdb.git
@@ -15,6 +16,8 @@ file 18bd5e9b33ee9257612e431e1d85546b6644f23f tests/ld/data/identity/README.md
 file fac65521f71855f64c4501e9546d79c5f6008eb8 tests/ld/data/identity/reversed.tsv
 file 4a8b358bfeec4366f0fde52d6c25e6a0ba55acbb tests/ld/data/test-panel/gwas/z.tsv
 file 253b8dbbddaa379d7961b0f0b8017c8781b90b9a tests/ld/data/test-panel/manifest.json
+file feeb18a3b6a1bd5cf06840a6d2f1d62438baa0b3 tests/ld/data/test-panel/panel.pgen
+file 52392f961f751594db980198b0247a222a314f15 tests/ld/data/test-panel/panel.psam
 file c178089019e85037c737dbdc50075fbaa4b52560 tests/ld/data/test-panel/panel.pvar
 file df5f49d881e18088f5ed9b12ddd64afa0276df29 tests/ld/data/test-panel/plink2/clump_r2_0.001.clumps
 file 075931ccec52867b411e520db05210306b27ecdd tests/ld/data/test-panel/plink2/clump_r2_0.01.clumps
@@ -78,6 +81,8 @@ file dd3f48734512595c600bec128950753be6ccd33b tests/ld/data/test-panel/store/zar
 file 8c8a09e39437cc9ce5ab167ce2c612c681327450 tests/ld/data/test-panel/variants.tsv
 file 758004ba3319ded3728c15ba9bba968683ef50cc tests/ld/testdata.py
 
+# Each `generated` line opens a block: what follows it, to the next, says how it was made.
+#
 # Generated, not copied: the K = 0 Test Store, which opengwasdb's tests write in a scratch
 # directory and do not commit. It was written once by that commit's own script, from a
 # `git archive` of it, installed in its own pixi environment as version 0.20.0 (the commit is
@@ -168,3 +173,86 @@ output 5d79065f71f6f6f1a40aa022fe921950c4dff827 tests/ld/data/test-panel/store-k
 output b68897776dace6af78ea17cce289339c38899207 tests/ld/data/test-panel/store-k0/variants/position/zarr.json
 output f67741aaddd8af91cfad9e981319a3f1ef26fc9e tests/ld/data/test-panel/store-k0/variants/zarr.json
 output e654eabd77aaa01866f5d9dacabfa2b2bbc2d947 tests/ld/data/test-panel/store-k0/zarr.json
+
+# Generated, not copied: the Test Panel's Genotype Store, which ogquery's Genotype Store reader
+# reads (opengwas/ogquery#11; ADR 0002, amended). opengwasdb's tests build one in a scratch
+# directory each session and commit none, so it was built once by opengwasdb 964ac1b2's own build,
+# the command its tests/ld/conftest.py runs, from a `git archive` of that commit (tag v0.26.0) in
+# its own pixi environment (pgenlib 0.95.2), in the archive's tests/ld/data/test-panel/:
+#
+#   pixi install --locked -e dev
+#   SETUPTOOLS_SCM_PRETEND_VERSION=0.26.0 pixi reinstall -e dev opengwasdb
+#   PYTHONNOUSERSITE=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+#       pixi run -e dev opengwasdb ld build --genotypes --pgen P/panel.pgen --keep P/panel.keep \
+#       --pcs P/pcs.eigenvec --pc-source "Test Panel" --panel-id "Test Panel" --ancestry EUR \
+#       --genotype-source "Test Panel" --r-scale 511 --t-partner 0.01 --info-min none \
+#       P/genotype-store
+#
+# with P = tests/ld/data/test-panel. It pins its inputs by path relative to itself
+# (`../panel.pgen`), size, mtime and SHA-256, and an open refuses a changed size or mtime. Git
+# keeps no mtime: a `git archive` gives every file the commit's time, 1795726371 s, which is what
+# the store records, and a test reads it from a copy whose inputs it sets to the recorded mtime
+# (genotype_answers.place). panel.pgen and panel.psam are copied here with it; they, panel.pvar,
+# and the PC File and keep list the store also records (`inputs`, which no read opens and this
+# repository does not hold) are the same blobs at 964ac1b2 as at the commit above. Its bytes are
+# the run's, except the root's `build` record (when, how long, peak memory) and the ALID
+# companion's generation, which hashes the root document.
+generated tests/ld/data/test-panel/genotype-store
+generated-commit 964ac1b28a3096553559d4a8565d877a884470e9
+generated-command opengwasdb ld build --genotypes --pgen tests/ld/data/test-panel/panel.pgen --keep tests/ld/data/test-panel/panel.keep --pcs tests/ld/data/test-panel/pcs.eigenvec --pc-source "Test Panel" --panel-id "Test Panel" --ancestry EUR --genotype-source "Test Panel" --r-scale 511 --t-partner 0.01 --info-min none tests/ld/data/test-panel/genotype-store
+input feeb18a3b6a1bd5cf06840a6d2f1d62438baa0b3 tests/ld/data/test-panel/panel.pgen
+input c178089019e85037c737dbdc50075fbaa4b52560 tests/ld/data/test-panel/panel.pvar
+input 52392f961f751594db980198b0247a222a314f15 tests/ld/data/test-panel/panel.psam
+input 57c18ea00f9b6cf1ebaa31ec0dc5d0818f8881df tests/ld/data/test-panel/panel.keep
+input c77abcb60b8cf228cf6bb5c4468ac01f3d19a25e tests/ld/data/test-panel/pcs.eigenvec
+output 7cd975376fcc48850ca45cc42639603eb3b5e16d tests/ld/data/test-panel/genotype-store/genotypes/basis.npy
+output 4d2e87b78ba1348c32711396e97bb4f333874846 tests/ld/data/test-panel/genotype-store/genotypes/fileset.npy
+output 2f42c50d845449c655b3cbee7a97471075c2e221 tests/ld/data/test-panel/genotype-store/genotypes/norm.npy
+output ed95c12a40eed8c3e72293d4c7d36582943b8c00 tests/ld/data/test-panel/genotype-store/genotypes/pgen_row.npy
+output df9a93e9a83513b2d9fd5fad9988cfb4be541c1e tests/ld/data/test-panel/genotype-store/genotypes/projection.npy
+output 329da76f2654729d2f019ff38ea2b6fe6b1c2dda tests/ld/data/test-panel/genotype-store/genotypes/sign.npy
+output d1f97dad6908138d519b0ef7143d6806e8ab27c6 tests/ld/data/test-panel/genotype-store/genotypes/zarr.json
+output 8053411c3f2f4d983b3f1e4ee0d5b069747b3c99 tests/ld/data/test-panel/genotype-store/variants/a1/c/0
+output f394c09394276fa3f0a3a5d0683177cd9884cf1d tests/ld/data/test-panel/genotype-store/variants/a1/zarr.json
+output 97a665d82aedcf1ee1506719b5b9366b4f1e5c60 tests/ld/data/test-panel/genotype-store/variants/a1_frequency/c/0
+output 857b4ff02b4fe7340a984877d706cf2203516a45 tests/ld/data/test-panel/genotype-store/variants/a1_frequency/zarr.json
+output 10f588f309347699e8fba06f5b2e1693112a2f19 tests/ld/data/test-panel/genotype-store/variants/a2/c/0
+output f394c09394276fa3f0a3a5d0683177cd9884cf1d tests/ld/data/test-panel/genotype-store/variants/a2/zarr.json
+output 747e31167264d4a40a18af334b81adf190ebd971 tests/ld/data/test-panel/genotype-store/variants/alid/c/0
+output f394c09394276fa3f0a3a5d0683177cd9884cf1d tests/ld/data/test-panel/genotype-store/variants/alid/zarr.json
+output b1a086c7fb8a4901447ee404d791ebc1a3fffada tests/ld/data/test-panel/genotype-store/variants/alid_index/alid/c/0
+output 3d44c4cd31e93b78978949a43f87073be2306b88 tests/ld/data/test-panel/genotype-store/variants/alid_index/alid/zarr.json
+output bcd40cdc7896525922246f6638c46cdf43b51ce6 tests/ld/data/test-panel/genotype-store/variants/alid_index/row/c/0
+output f34cfd46366e7ac5f744999f6a4c13c2f054d865 tests/ld/data/test-panel/genotype-store/variants/alid_index/row/zarr.json
+output d1f97dad6908138d519b0ef7143d6806e8ab27c6 tests/ld/data/test-panel/genotype-store/variants/alid_index/zarr.json
+output e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 tests/ld/data/test-panel/genotype-store/variants/alid_mmap/.lock
+output 4e08f2a54f04d624be6f469572460af728922c46 tests/ld/data/test-panel/genotype-store/variants/alid_mmap/848ee8398cea96f0af54276e4f494847cef954c19ce920e1595806bee7c302e2/keys.bin
+output 7d5cfe49753a37b5f8a0b0a14fd39c52cf3d49b5 tests/ld/data/test-panel/genotype-store/variants/alid_mmap/848ee8398cea96f0af54276e4f494847cef954c19ce920e1595806bee7c302e2/manifest.json
+output 48747137b6f4ed50acb725981a9aa79d3a8fce2c tests/ld/data/test-panel/genotype-store/variants/alid_mmap/848ee8398cea96f0af54276e4f494847cef954c19ce920e1595806bee7c302e2/rows.i32le
+output 5d79065f71f6f6f1a40aa022fe921950c4dff827 tests/ld/data/test-panel/genotype-store/variants/position/c/0
+output b68897776dace6af78ea17cce289339c38899207 tests/ld/data/test-panel/genotype-store/variants/position/zarr.json
+output f67741aaddd8af91cfad9e981319a3f1ef26fc9e tests/ld/data/test-panel/genotype-store/variants/zarr.json
+output baa8856a8cc2c4b4cbb626913060248cdac53ea9 tests/ld/data/test-panel/genotype-store/zarr.json
+
+# Generated, not copied: opengwasdb 964ac1b2's answers on that Genotype Store, which ogquery's
+# reader is held to (test_genotype_answers.py). This repository's tests/ld/genotype_answers.py
+# holds the questions; it was run once, in the same environment as the store's build, against
+# that commit's `opengwasdb.ld.open` (and the ogquery 0.4.0 it reads through), from this
+# repository's tests/ld:
+#
+#   PYTHONNOUSERSITE=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+#       pixi run -e dev python <ogquery>/tests/ld/genotype_answers.py <scratch> \
+#       tests/ld/data/test-panel/genotype-answers
+#
+# It was written to a scratch directory and copied here; no byte of it records the path. Its
+# `input` lines are this repository's files it read, by blob id here -- the questions, and
+# tests/ld/contract/support.py, which picks the ALIDs they ask about -- so a change to either
+# fails test_source.py until the answers are written again.
+generated tests/ld/data/test-panel/genotype-answers
+generated-commit 964ac1b28a3096553559d4a8565d877a884470e9
+generated-command tests/ld/genotype_answers.py <scratch> tests/ld/data/test-panel/genotype-answers
+input ee5d92a2237a80b63bf049d5f391b216f0654c44 tests/ld/genotype_answers.py
+input 1c0cfb50474a76e876884bca62dc1618aab5180c tests/ld/contract/support.py
+input baa8856a8cc2c4b4cbb626913060248cdac53ea9 tests/ld/data/test-panel/genotype-store/zarr.json
+output 62ba002d0cbe708d7c292ae577dd62510131b33d tests/ld/data/test-panel/genotype-answers/answers.json
+output 20450c483d7ee3cb826faaaee76ed8e76d1e049a tests/ld/data/test-panel/genotype-answers/answers.npz

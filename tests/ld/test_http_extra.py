@@ -9,31 +9,14 @@ imports in a fresh interpreter, so they hold with the extra installed or not.
 
 from __future__ import annotations
 
-import json
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
+from blocked import without
 
 from ogquery import opening
 
 TEST_STORE = Path(__file__).resolve().parent / "data" / "test-panel" / "store"
-
-
-def _without(blocked: tuple[str, ...], statements: str) -> dict[str, object]:
-    """Run `statements` in a fresh interpreter in which `blocked` cannot be imported, and return
-    the JSON it prints."""
-    code = (
-        "import json, sys\n"
-        f"for name in {blocked!r}:\n"
-        "    sys.modules[name] = None\n"
-        f"{statements}\n"
-    )
-    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
-    assert done.returncode == 0, done.stderr
-    found: dict[str, object] = json.loads(done.stdout)
-    return found
 
 
 OPEN_A_URL = (
@@ -53,7 +36,7 @@ OPEN_A_URL = (
     "blocked", [("fsspec", "aiohttp"), ("fsspec",), ("aiohttp",)], ids=["both", "fsspec", "aiohttp"]
 )
 def test_a_url_without_the_extra_names_it(blocked: tuple[str, ...]) -> None:
-    out = _without(blocked, OPEN_A_URL + "print(json.dumps(out))")
+    out = without(blocked, OPEN_A_URL + "print(json.dumps(out))")
     assert out["raised"] == "HttpExtraMissing", out
     assert out["import_error"] and out["missing_extra"]
     message = str(out["message"])
@@ -74,7 +57,7 @@ def test_a_local_store_reads_without_the_extra() -> None:
         "       'loaded': [n for n in ('fsspec', 'aiohttp') if sys.modules.get(n) is not None]}\n"
         "print(json.dumps(out))"
     )
-    out = _without(("fsspec", "aiohttp"), statements)
+    out = without(("fsspec", "aiohttp"), statements)
     assert out == {"shape": [40, 40], "clumped": 40, "proxies": out["proxies"], "loaded": []}
     assert isinstance(out["proxies"], int) and out["proxies"] > 0
 

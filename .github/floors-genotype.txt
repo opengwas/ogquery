@@ -1,0 +1,4 @@
+# The lowest version of each `genotype` extra dependency pyproject.toml allows, installed with
+# floors.txt by CI's `floors` job (pip -c). tests/tooling/test_floors.py holds this to pyproject.toml.
+pgenlib==0.94.0
+threadpoolctl==3.5.0

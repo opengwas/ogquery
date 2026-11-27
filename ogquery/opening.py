@@ -8,7 +8,9 @@ which every GWAS read imports; the LD read path does not import it, so an LD-onl
 under zarr's defaults, as ogld's readers did. opengwasdb measured `proxies` 17-29 % slower cold
 under the fused pipeline on real LD Stores (its ADR 0094 amendment, #460; ADR 0002).
 
-An http(s) URL opens through fsspec and aiohttp, which only the `http` extra installs.
+An http(s) URL opens through fsspec and aiohttp, which only the `http` extra installs. A Genotype
+Store is read with pgenlib and threadpoolctl, which only the `genotype` extra installs:
+`require_genotype` is that extra's check, as `require_http` is the `http` extra's.
 """
 
 from __future__ import annotations
@@ -34,6 +36,18 @@ HTTP_EXTRA: Final = "ogquery[http]"
 class HttpExtraMissing(ImportError):
     """An http(s) location, with the `http` extra not installed: the error names the extra,
     rather than leaving zarr to fail on whichever module it imports first."""
+
+
+#: What reading a Genotype Store imports: pgenlib decodes the pgens it pins, and threadpoolctl
+#: holds BLAS to one thread a request (`ogquery.ld.genotypes`, the one package that imports them).
+GENOTYPE_MODULES: Final = ("pgenlib", "threadpoolctl")
+#: What installs `GENOTYPE_MODULES` (pyproject.toml's `genotype` extra).
+GENOTYPE_EXTRA: Final = "ogquery[genotype]"
+
+
+class GenotypeExtraMissing(ImportError):
+    """A Genotype Store, with the `genotype` extra not installed: the error names the extra,
+    rather than leaving the reader to fail on whichever module it imports first."""
 
 
 def open_group(path: str | os.PathLike[str]) -> Any:
@@ -67,17 +81,47 @@ def open_group(path: str | os.PathLike[str]) -> Any:
     return zarr.open_group(store, mode="r", zarr_format=None)
 
 
+def is_http(location: str | os.PathLike[str]) -> bool:
+    """Whether `location` is an http(s) URL, by the scheme test `open_group` reads one by
+    (`_scheme`, in any case; a Windows drive, `C:\\`, is a local path)."""
+    return _scheme(os.fspath(location)) in HTTP_SCHEMES
+
+
 def require_http(location: str) -> None:
     """Raise `HttpExtraMissing`, naming the extra and the modules it lacks, unless fsspec and
     aiohttp are both installed. They are found, not imported: zarr imports them, and ogquery
     imports nothing outside its three dependencies itself."""
-    missing = [name for name in HTTP_MODULES if importlib.util.find_spec(name) is None]
+    missing = _missing(HTTP_MODULES)
     if missing:
         raise HttpExtraMissing(
             f"{location} is an http(s) URL, and reading one needs {' and '.join(HTTP_MODULES)}, "
             f"which ogquery installs only with its `http` extra: pip install '{HTTP_EXTRA}' "
             f"(not importable: {', '.join(missing)})"
         )
+
+
+def require_genotype(location: str | None = None) -> None:
+    """Raise `GenotypeExtraMissing`, naming the extra and the modules it lacks, unless pgenlib and
+    threadpoolctl are both installed; `location` is the Genotype Store being opened, if one is.
+    They are found, not imported: only `ogquery.ld.genotypes` imports them, once this passes."""
+    missing = _missing(GENOTYPE_MODULES)
+    if missing:
+        subject = (
+            "reading a Genotype Store"
+            if location is None
+            else f"{location} is a Genotype Store, and reading one"
+        )
+        raise GenotypeExtraMissing(
+            f"{subject} needs {' and '.join(GENOTYPE_MODULES)}, which ogquery installs only "
+            f"with its `genotype` extra: pip install '{GENOTYPE_EXTRA}' "
+            f"(not importable: {', '.join(missing)})"
+        )
+
+
+def _missing(modules: tuple[str, ...]) -> list[str]:
+    """Which of an extra's `modules` cannot be imported, in order: found by `find_spec`, never
+    imported, so checking an extra loads nothing (`require_http`, `require_genotype`)."""
+    return [name for name in modules if importlib.util.find_spec(name) is None]
 
 
 def _scheme(location: str) -> str | None:

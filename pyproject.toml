@@ -60,7 +60,23 @@ test = ["pytest>=8", "scipy>=1.11", "hypothesis>=6"]
 # The floors are opengwasdb's (its pyproject.toml at c8ebe4ca), which read LD Stores over
 # HTTP with them.
 http = ["fsspec>=2024.12", "aiohttp>=3.10"]
-dev = ["ogquery[test,http]", "ruff>=0.6", "mypy>=1.10"]
+# Reading a Genotype Store (`ogquery.ld.open` on one): its reader computes r from the pgens the
+# store pins, with pgenlib, and holds BLAS to one thread a request with threadpoolctl. Neither is
+# a core dependency, and only `ogquery.ld.genotypes` imports them; without them opening a Genotype
+# Store raises `ogquery.opening.GenotypeExtraMissing`, naming this extra (ADR 0002, amended).
+# pgenlib 0.94 is the first with wheels for Python 3.14; none publishes a Windows wheel.
+# threadpoolctl 3.5 is the first that finds the OpenBLAS numpy 2's wheels carry: below it the
+# one-thread limit finds no BLAS to hold, and changes nothing.
+genotype = ["pgenlib>=0.94", "threadpoolctl>=3.5"]
+# `dev` carries the `genotype` extra where pgenlib publishes wheels, so a Windows checkout's
+# development environment compiles nothing.
+dev = [
+  "ogquery[test,http]",
+  "pgenlib>=0.94; sys_platform != 'win32'",
+  "threadpoolctl>=3.5; sys_platform != 'win32'",
+  "ruff>=0.6",
+  "mypy>=1.10",
+]
 
 [project.urls]
 Homepage = "https://github.com/opengwas/ogquery"
@@ -97,6 +113,7 @@ testpaths = ["tests"]
 addopts = ["--strict-markers", "--import-mode=importlib"]
 markers = [
   "http: reads an LD Store over HTTP from a locally served copy; needs the `http` extra",
+  "genotype: reads a Genotype Store; needs the `genotype` extra, skipped on Windows, where pgenlib publishes no wheel",
   "boundary: the import boundary, what the package loads; CI runs these once, in their own step",
 ]
 # Each test directory imports its own helpers (`contract_reader`, the unit tests'
@@ -120,6 +137,11 @@ strict = true
 
 [[tool.mypy.overrides]]
 module = ["numcodecs"]
+ignore_missing_imports = true
+
+# The `genotype` extra's modules ship no types (opengwasdb's pyproject.toml has the same).
+[[tool.mypy.overrides]]
+module = ["pgenlib", "threadpoolctl"]
 ignore_missing_imports = true
 
 # As opengwasdb (its pyproject.toml, #244 review finding 4): zarr's own types
@@ -152,6 +174,22 @@ hypothesis = ">=6"
 fsspec = ">=2024.12"
 aiohttp = ">=3.10"
 
+# The `genotype` extra, from PyPI as a user's `pip install ogquery[genotype]` gets it, on Linux and
+# macOS only: pgenlib publishes no Windows wheel. On Windows an environment with this feature has
+# neither module, and the tests marked `genotype` are skipped, naming the platform. Not named
+# `genotype`: pixi makes that feature from the extra itself, on every platform.
+[tool.pixi.feature.genotype-wheels.target.linux-64.pypi-dependencies]
+pgenlib = ">=0.94"
+threadpoolctl = ">=3.5"
+
+[tool.pixi.feature.genotype-wheels.target.osx-64.pypi-dependencies]
+pgenlib = ">=0.94"
+threadpoolctl = ">=3.5"
+
+[tool.pixi.feature.genotype-wheels.target.osx-arm64.pypi-dependencies]
+pgenlib = ">=0.94"
+threadpoolctl = ">=3.5"
+
 [tool.pixi.feature.dev.dependencies]
 ruff = ">=0.6"
 mypy = ">=1.10"
@@ -167,12 +205,15 @@ python = "3.14.*"
 
 [tool.pixi.environments]
 default = { features = ["py312"], solve-group = "default" }
-# `test`, `dev` and `test-py314` carry the `http` extra, as CI's `tests` matrix installs it;
-# `test-nohttp` is the suite without it, where an http(s) open must name the extra.
-test = { features = ["py312", "test", "http"], solve-group = "default" }
-dev = { features = ["py312", "test", "http", "dev"], solve-group = "default" }
-test-py314 = { features = ["py314", "test", "http"] }
+# `test`, `dev` and `test-py314` carry the `http` and `genotype` extras, as CI's `tests` matrix
+# installs them; `test-nohttp` is the suite without either, where an http(s) open must name the
+# `http` extra, and `test-nogenotype` without the `genotype` extra, where opening a Genotype
+# Store must name it and every other Store still answers.
+test = { features = ["py312", "test", "http", "genotype-wheels"], solve-group = "default" }
+dev = { features = ["py312", "test", "http", "genotype-wheels", "dev"], solve-group = "default" }
+test-py314 = { features = ["py314", "test", "http", "genotype-wheels"] }
 test-nohttp = { features = ["py312", "test"], solve-group = "default" }
+test-nogenotype = { features = ["py312", "test", "http"], solve-group = "default" }
 
 [tool.pixi.feature.test.tasks]
 # Hermetic: no user site-packages, one BLAS thread, as opengwasdb's `test`.

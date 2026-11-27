@@ -50,18 +50,23 @@ LEADS = {
 CLUMP_P1 = 5e-8
 
 
+#: The directories under the Test Panel that a store build or a read wrote (data/SOURCE).
+GENERATED = ("store", "store-k0", "genotype-store", "genotype-answers")
+
+
 def test_every_file_matches_its_manifest_hash() -> None:
     # The Test Stores under store/ and store-k0/ are not the Test Panel:
-    # scripts/ld/make_test_store.py writes them (store-k0/: ogquery#2, data/SOURCE).
+    # scripts/ld/make_test_store.py writes them (store-k0/: ogquery#2, data/SOURCE). Nor are the
+    # Genotype Store and opengwasdb's answers on it, which a build and a read wrote (ogquery#11).
     files = td.manifest()["files"]
     on_disk = sorted(
         p.relative_to(td.TEST_PANEL).as_posix()
         for p in td.TEST_PANEL.rglob("*")
         if p.is_file()
         and p.name != "manifest.json"
-        and p.relative_to(td.TEST_PANEL).parts[0] not in ("store", "store-k0")
+        and p.relative_to(td.TEST_PANEL).parts[0] not in GENERATED
     )
-    # ogquery holds the files its tests read, not the genotypes, PCs and dosages a build or a
+    # ogquery holds the files its tests read, not the PCs and dosages a build or a
     # recomputation reads (tests/ld/data/test-panel/SOURCE): every one here is listed.
     assert len(on_disk) >= 8, "the fixture must hold the Test Panel's files"
     assert set(on_disk) <= set(files), "every file here is listed"

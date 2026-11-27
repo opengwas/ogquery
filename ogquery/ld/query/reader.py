@@ -1,9 +1,8 @@
 """The reader interface the four queries name (opengwas/ogld#91).
 
-`ogquery.ld.store.StoreReader` and `opengwasdb.ld.genotypes.GenotypeReader` both satisfy it
-structurally: one
-reads materialised arrays, the other computes the same answers from pinned pgens. The queries
-depend on this seam only, so neither reader has to be the other's base class.
+`ogquery.ld.store.StoreReader` and `ogquery.ld.genotypes.reader.GenotypeReader` both satisfy it
+structurally: one reads materialised arrays, the other computes the same answers from pinned pgens.
+The queries depend on this seam only, so neither reader has to be the other's base class.
 """
 
 from __future__ import annotations
