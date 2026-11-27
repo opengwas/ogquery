@@ -9,15 +9,17 @@ them (ogld#4: matrices; ogld#6: proxies and clumping) edit different files.
 Two reads answer what a store holds before any r is read: `variants_in` (and its count,
 `count_in`) for a region, and `has` for a list of ALIDs (ogld#79; ogquery#2).
 
-An `LDStore` reads through the `Reader` protocol, so a reader of another kind plugs into it:
-opengwasdb's Genotype Store reader, which needs pgenlib and so is not ogquery's (ADR 0002).
-`open` here opens LD Stores and refuses a Genotype Store, naming opengwasdb.
+An `LDStore` reads through the `Reader` protocol, so a reader of either kind plugs into it: the LD
+Store's `StoreReader`, or a Genotype Store's `GenotypeReader`, which computes r from the pgens the
+store pins and needs the `genotype` extra (opengwas/ogquery#11; ADR 0002, amended). `open` reads the
+root once and hands it to the reader of its kind.
 """
 
 from __future__ import annotations
 
 import os
 from collections.abc import Sequence
+from typing import cast
 
 import numpy as np
 import numpy.typing as npt
@@ -29,8 +31,10 @@ from ogquery.ld.query import proxies as proxies_query
 from ogquery.ld.query.kind import GENOTYPE, open_kind
 from ogquery.ld.query.reader import Reader
 from ogquery.ld.query.results import Clumps, LDMatrix, Proxies
+from ogquery.ld.store.location import OpenedStore
 from ogquery.ld.store.reader import StoreReader, opened_ld
 from ogquery.ld.store.tables import Variants
+from ogquery.opening import is_http, require_genotype
 
 
 class LDStore:
@@ -136,17 +140,35 @@ def _range(chrom: str, start: int, stop: int) -> tuple[str, int, int]:
 
 
 def open(location: str | os.PathLike[str], *, cache_bytes: int | None = None) -> LDStore:
-    """Open the LD Store at a local path or an HTTP(S) URL (ld-store §1; ogld#4).
+    """Open the LD Store at a local path or an HTTP(S) URL, or the Genotype Store at a local path
+    (ld-store §1; ogld#4).
 
     The store keeps at most `cache_bytes` of the chunks and shard indexes its reads fetch, 4 GiB
     if None, and none if 0; anything but an int ≥ 0 is an `InputError` (ld-store §10; ogld#32).
-    A URL needs the `http` extra (`pip install ogquery[http]`). A Genotype Store is an
-    `InputError` naming opengwasdb, whose reader computes its answers from genotypes."""
+    A URL needs the `http` extra (`pip install ogquery[http]`). An LD Store is read by
+    `StoreReader`; a Genotype Store by `GenotypeReader`, imported only when one is opened, and
+    only with the `genotype` extra (`pip install ogquery[genotype]`): without it this raises
+    `ogquery.opening.GenotypeExtraMissing`, naming the extra. A Genotype Store is read from local
+    files only: its reader finds the pgens it pins by path, relative to its root, and memory-maps
+    its arrays (opengwasdb's `docs/spec/genotype-store.md`), so an http(s) URL whose root is one is
+    an `InputError` saying so -- before the extra is checked, which would not make it readable."""
     kinded = open_kind(location, cache_bytes=cache_bytes)
+    reader: Reader
     if kinded.kind == GENOTYPE:
-        raise InputError(
-            f"{location} is a Genotype Store, which ogquery does not read: its answers are "
-            "computed from genotypes with pgenlib. Open it with opengwasdb.ld.open "
-            "(pip install 'opengwasdb[ld-build]')"
+        if is_http(kinded.location):
+            raise InputError(
+                f"{kinded.location} is a Genotype Store, which is read from a local path only: "
+                "the pgens it pins and its sidecar arrays are local files, which its reader opens "
+                "by path and memory-maps, so it cannot be read over HTTP(S)"
+            )
+        require_genotype(kinded.location)
+        from ogquery.ld.genotypes.reader import GenotypeReader
+
+        record = kinded.record()
+        provenance = cast(Provenance, record if isinstance(record, dict) else {})
+        reader = GenotypeReader.from_opened(
+            OpenedStore(kinded.root, kinded.location, provenance, kinded.cache)
         )
-    return LDStore(StoreReader.from_opened(opened_ld(kinded.root, kinded.location, kinded.cache)))
+    else:
+        reader = StoreReader.from_opened(opened_ld(kinded.root, kinded.location, kinded.cache))
+    return LDStore(reader)

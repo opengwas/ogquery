@@ -1,7 +1,8 @@
 """LD Stores: per-ancestry LD for clumping, proxies and LD matrices, read side (ogquery#2).
 
 The read path of opengwasdb's `opengwasdb.ld`, moved here from opengwasdb `c8ebe4ca`
-(ADR 0002). The public surface (opengwasdb's `docs/spec/ld-store.md` §8, §9):
+(ADR 0002), and the Genotype Store's reader from `964ac1b2` (opengwas/ogquery#11). The public
+surface (opengwasdb's `docs/spec/ld-store.md` §8, §9):
 
     store = ogquery.ld.open(path_or_url, cache_bytes=None)  # LDStore; keeps 4 GiB of chunks
     store.matrix(alids, fill=None)                  # LDMatrix: signed r, NaN where unstored
@@ -12,8 +13,10 @@ The read path of opengwasdb's `opengwasdb.ld`, moved here from opengwasdb `c8ebe
     store.has(alids)                                # bool per ALID
 
 A request the store cannot answer exactly raises `Refusal`, naming its reason. An http(s)
-URL needs the `http` extra (`pip install ogquery[http]`). Building, validating and the
-Genotype Store reader are opengwasdb's.
+URL needs the `http` extra (`pip install ogquery[http]`), and a Genotype Store, whose answers
+are computed from the pgens it pins, the `genotype` extra (`pip install ogquery[genotype]`); a
+Genotype Store is opened from a local path only.
+Building and validating are opengwasdb's.
 """
 
 from ogquery.ld.format import AnswerKind, InputError, Provenance, Refusal, RefusalReason

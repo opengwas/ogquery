@@ -22,14 +22,21 @@ it through opengwaspy.
 ## Install
 
 ```bash
-pip install ogquery            # local Stores
-pip install 'ogquery[http]'    # and Stores served over HTTP(S)
+pip install ogquery              # local Stores
+pip install 'ogquery[http]'      # and Stores served over HTTP(S)
+pip install 'ogquery[genotype]'  # and Genotype Stores (Linux and macOS)
 ```
 
 It installs numpy, zarr, numcodecs and their own dependencies, all as wheels.
 The `http` extra adds fsspec and aiohttp, which zarr reads a URL with; without
 it, opening an `http(s)://` Store raises `ogquery.opening.HttpExtraMissing`,
-naming the extra.
+naming the extra. The `genotype` extra adds pgenlib and threadpoolctl, which a
+Genotype Store's answers are computed with; without it, opening one raises
+`ogquery.opening.GenotypeExtraMissing`, naming the extra. pgenlib publishes
+wheels for Linux (x86_64, aarch64) and macOS, on Python 3.12 to 3.14, and none
+for Windows, where `pip install 'ogquery[genotype]'` would compile it from
+source: CI tests Genotype Stores on Linux (x86_64) and macOS only. It runs no
+aarch64 leg for anything, so Linux aarch64's wheels are not tested.
 
 ## Open a release
 
@@ -86,20 +93,27 @@ records the fill. `variants_in`, `count_in` and `has` read the variant table
 alone, so a caller can size a region or check membership before any r is
 read; `has` is true exactly where the queries find an ALID present, and an
 indel spelt reference first is refused (`ogquery.alid.ReferenceFirstIndel`), as
-the queries refuse it. A Genotype Store is opengwasdb's to read
-(`opengwasdb.ld.open`); `ogquery.ld.open` refuses one, naming it.
+the queries refuse it.
+
+A **Genotype Store** answers the same queries, computing r on demand from the
+pgens it pins (opengwasdb builds it; `ogquery.ld.genotypes` reads it, with the
+`genotype` extra), from a local path only: its reader opens the pgens it pins
+by path and memory-maps its arrays. `ogquery.ld.open` reads a store's root once
+and opens either kind; the answers and refusals are the ones opengwasdb's
+reader gives.
 
 ## Develop
 
 ```bash
-pixi run -e test test              # the whole suite, with the `http` extra
-pixi run -e test-nohttp test -m "not http"   # and without it
+pixi run -e test test              # the whole suite, with the `http` and `genotype` extras
+pixi run -e test-nohttp test -m "not http and not genotype"   # and without them
+pixi run -e test-nogenotype test -m "not genotype"            # without `genotype` alone
 pixi run -e test contract          # the contract bundle alone
 pixi run -e dev lint               # ruff; `typecheck` is mypy --strict
 pixi run -e dev contract-check     # tests/contract is opengwasdb's bundle
 ```
 
-Or, without pixi: `pip install -e ".[test,http]"` and `pytest`.
+Or, without pixi: `pip install -e ".[test,http,genotype]"` and `pytest`.
 
 [CONTRIBUTING.md](./CONTRIBUTING.md) is how to contribute,
 [AGENTS.md](./AGENTS.md) how work moves, [CONTEXT.md](./CONTEXT.md) the

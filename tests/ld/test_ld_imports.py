@@ -5,6 +5,8 @@ opengwasdb's `opengwasdb.ld` imported its builder and validator when imported, a
 Store reader imported threadpoolctl. ogquery holds the read side alone, so a fresh interpreter
 that imports `ogquery.ld` and asks every LD question of a local Test Store must never have
 loaded opengwasdb, pgenlib, threadpoolctl, fsspec, aiohttp, scipy, pysam, pandas or sqlite3.
+The Genotype Store's reader, `ogquery.ld.genotypes`, is the one place pgenlib and threadpoolctl
+load, and only when a Genotype Store is opened (opengwas/ogquery#11; ADR 0002, amended).
 The static boundary over every module is `tests/unit/test_store_reader_imports.py`'s.
 
 One is measured against a baseline: `import zarr` itself imports fsspec whenever fsspec is
@@ -88,7 +90,9 @@ def test_asking_every_ld_question_loads_no_build_code_and_no_heavy_dependency() 
     assert _loaded_after(EVERY_QUESTION) == _loaded_after(BASELINE)
 
 
-def test_importing_every_ld_module_loads_none_of_them() -> None:
+def _ld_modules(*, genotypes: bool) -> list[str]:
+    """The `ogquery.ld` modules, those of the Genotype Store's reader (`ogquery.ld.genotypes`)
+    or every other."""
     package = Path(__file__).resolve().parents[2] / "ogquery" / "ld"
     modules = sorted(
         ".".join(("ogquery", "ld", *path.relative_to(package).with_suffix("").parts)).removesuffix(
@@ -96,9 +100,39 @@ def test_importing_every_ld_module_loads_none_of_them() -> None:
         )
         for path in package.rglob("*.py")
     )
+    return [m for m in modules if m.startswith("ogquery.ld.genotypes") == genotypes]
+
+
+def test_importing_ogquery_and_ogquery_ld_loads_none_of_them() -> None:
+    assert _loaded_after("import ogquery\nimport ogquery.ld") == _loaded_after(BASELINE)
+
+
+def test_importing_every_ld_module_loads_none_of_them() -> None:
+    modules = _ld_modules(genotypes=False)
     assert len(modules) >= 20, modules
     imports = "\n".join(f"import {module}" for module in modules)
     assert _loaded_after(imports) == _loaded_after(BASELINE)
+
+
+#: What the Genotype Store's reader may load beyond the LD read path: the `genotype` extra.
+GENOTYPE_EXTRA = frozenset({"pgenlib", "threadpoolctl"})
+
+
+@pytest.mark.genotype
+def test_a_genotype_store_query_loads_the_extra_and_nothing_else(genotype_store: Path) -> None:
+    modules = _ld_modules(genotypes=True)
+    assert {"ogquery.ld.genotypes", "ogquery.ld.genotypes.reader"} <= set(modules), modules
+    imports = "\n".join(f"import {module}" for module in modules)
+    query = (
+        "import ogquery.ld\n"
+        f"store = ogquery.ld.open({str(genotype_store)!r})\n"
+        "rows = store.variants_in('22', 1, 3_000_000_000).alid.tolist()[:20]\n"
+        "store.matrix(rows)\n"
+        "store.close()\n"
+    )
+    baseline = set(_loaded_after(BASELINE))
+    assert set(_loaded_after(imports)) - baseline <= GENOTYPE_EXTRA
+    assert set(_loaded_after(query)) - baseline == GENOTYPE_EXTRA, "and the probe sees them load"
 
 
 def test_the_probe_sees_a_forbidden_import() -> None:

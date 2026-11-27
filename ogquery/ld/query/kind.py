@@ -5,9 +5,9 @@ opened once, its kind is read from the attribute it records, and the opened grou
 that kind's reader or validator. One read is enough: opening the root again in the reader would
 add a metadata read — an HTTP round trip for a remote store — to every open.
 
-ogquery reads LD Stores; a Genotype Store's reader needs pgenlib and stays in opengwasdb
-(ogquery#2; ADR 0002). So this seam still names both kinds, and opengwasdb dispatches a
-`GENOTYPE` root to its own reader, while `ogquery.ld.open` refuses one.
+`ogquery.ld.open` dispatches an `LD` root to `StoreReader` and a `GENOTYPE` root to
+`ogquery.ld.genotypes`'s `GenotypeReader`, which needs the `genotype` extra (opengwas/ogquery#11;
+ADR 0002, amended).
 
 This reads the kind and nothing more: an envelope a reader refuses (a Zarr v2 hierarchy, a root
 with no provenance) is still validation's to report as findings, not this seam's to raise.
@@ -25,8 +25,8 @@ from ogquery.ld.store.location import ChunkCache, open_group
 
 LD: Final = "ld_store"
 GENOTYPE: Final = "genotype_store"
-#: The root attribute a Genotype Store records its provenance under: opengwasdb's
-#: `opengwasdb.ld.genotypes.layout.KEY`, which is this kind's name.
+#: The root attribute a Genotype Store records its provenance under, which is this kind's name:
+#: `ogquery.ld.genotypes.layout.KEY` is this one.
 KEY: Final = GENOTYPE
 
 
@@ -46,8 +46,13 @@ class Kinded:
 
 def open_kind(location: str | os.PathLike[str], *, cache_bytes: int | None = None) -> Kinded:
     """Open `location` once and say which kind it is: a root with the Genotype Store key is one,
-    and every other root is read as an LD Store, whose envelope its reader or validation judges."""
+    and every other root is read as an LD Store, whose envelope its reader or validation judges.
+
+    The location is read once, by `os.fspath`, so what is opened and what is recorded -- and so
+    what a reader names and judges, such as whether it is a URL -- are the same string; a `Path`
+    is recorded as `str(path)`."""
+    where = os.fspath(location)
     cache = ChunkCache(cache_bytes)
-    root = open_group(location, cache=cache)
+    root = open_group(where, cache=cache)
     kind: Literal["ld_store", "genotype_store"] = GENOTYPE if KEY in root.attrs else LD
-    return Kinded(kind, root, str(location), cache)
+    return Kinded(kind, root, where, cache)
