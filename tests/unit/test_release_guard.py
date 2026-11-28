@@ -31,7 +31,8 @@ HERE, ELSEWHERE = "comp", "v1-completed"
 
 
 def release_id(name: str) -> str:
-    return str(json.loads((RELEASES / name / "manifest.json").read_text(encoding="utf-8"))["release_id"])
+    text = (RELEASES / name / "manifest.json").read_text(encoding="utf-8")
+    return str(json.loads(text)["release_id"])
 
 
 def test_the_contract_releases_have_the_ids_this_file_names() -> None:
