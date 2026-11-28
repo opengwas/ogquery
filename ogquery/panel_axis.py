@@ -35,12 +35,15 @@ import numpy as np
 
 from ogquery.alid import ParsedAlid
 from ogquery.alid_index import ABSENT, AlidIndex
+from ogquery.format import CpraNormalForm
 from ogquery.guard import PANEL, IndexSpace, SpaceBound, require_space
 from ogquery.hybrid import DenseComponentSharesAxis, panel_rows
 from ogquery.npy_sidecar import release_maps
 from ogquery.variant_axis import (
+    AnyVariantRecord,
+    IdentifierResolution,
     VariantAxis,
-    VariantRecord,
+    resolve_cpra_identifiers,
 )
 
 
@@ -125,7 +128,7 @@ class PanelVariantAxis:
         panel: np.ndarray = rows[on_panel].astype("int32")
         return panel
 
-    def _record(self, record: VariantRecord | None) -> VariantRecord | None:
+    def _record(self, record: AnyVariantRecord | None) -> AnyVariantRecord | None:
         """A shared record renumbered to its panel row; None for one off the panel."""
         if record is None:
             return None
@@ -170,10 +173,10 @@ class PanelVariantAxis:
         (`source_alids_by_indices`, #470), and the sidecar is the shared axis's."""
         raise self._refused("source_alid sidecar")
 
-    def tabix_range(self, chromosome: str, start: int, end: int) -> list[VariantRecord]:
+    def tabix_range(self, chromosome: str, start: int, end: int) -> list[AnyVariantRecord]:
         raise self._refused("Variant Table or tabix index")
 
-    def written_table_records(self) -> Iterator[VariantRecord]:
+    def written_table_records(self) -> Iterator[AnyVariantRecord]:
         raise self._refused("Variant Table")
 
     def close(self) -> None:
@@ -190,6 +193,41 @@ class PanelVariantAxis:
         """The panel rows the identifiers name, in the shared axis's order
         (`VariantAxis.indices_by_identifiers`), those off the panel left out."""
         return self._to_panel(self._shared.indices_by_identifiers(identifiers))
+
+    def resolve_identifiers(self, identifiers: Sequence[str]) -> IdentifierResolution:
+        """`VariantAxis.resolve_identifiers` in panel rows: the shared axis resolves, the
+        rows off the panel are left out, and the misses are the shared axis's."""
+        if self._shared.keys_are_cpra:
+            # Asked of the panel's own CPRA index, so a hit's or a miss's row is a panel row
+            # and a variant off the panel is absent here, as the component holds no such row.
+            return resolve_cpra_identifiers(
+                self.alid_index,
+                identifiers,
+                release_id=self.index_space.identity.release_id,
+                form=self.cpra_normal_form,
+                space=self.index_space,
+                aliases=lambda names: self._to_panel(
+                    np.array(self._shared._indices_of_aliases(names), dtype=np.int64)
+                ).tolist(),
+            )
+        found = self._shared.resolve_identifiers(identifiers)
+        return IdentifierResolution(self._to_panel(found.indices), found.misses)
+
+    @property
+    def keys_are_cpra(self) -> bool:
+        return self._shared.keys_are_cpra
+
+    @property
+    def cpra_normal_form(self) -> CpraNormalForm:
+        return self._shared.cpra_normal_form
+
+    @property
+    def identity_columns(self) -> tuple[str, ...]:
+        return self._shared.identity_columns
+
+    @property
+    def source_column(self) -> str:
+        return self._shared.source_column
 
     def indices_by_alias(self, alias: str) -> np.ndarray:
         return self._to_panel(self._shared.indices_by_alias(alias))
@@ -268,7 +306,7 @@ class PanelVariantAxis:
         }
 
     # ── the record reads: the shared axis's rows, its `source_alid` included (#470) ──
-    def by_index(self, variant_index: int, *, expect_space: IndexSpace) -> VariantRecord | None:
+    def by_index(self, variant_index: int, *, expect_space: IndexSpace) -> AnyVariantRecord | None:
         require_space(self.index_space, expect_space, "a variant index")
         [shared] = self._to_shared(np.array([variant_index])).tolist()
         if shared < 0:
@@ -282,28 +320,28 @@ class PanelVariantAxis:
         indices: Iterable[int],
         *,
         expect_space: IndexSpace,
-    ) -> dict[int, VariantRecord]:
+    ) -> dict[int, AnyVariantRecord]:
         require_space(self.index_space, expect_space, "a variant index")
         panel = np.array(sorted({int(i) for i in indices}), dtype=np.int64)
         shared = self._to_shared(panel)
         found = self._shared.by_indices(
             shared[shared >= 0].tolist(), expect_space=self._shared.index_space
         )
-        out: dict[int, VariantRecord] = {}
+        out: dict[int, AnyVariantRecord] = {}
         for row, shared_row in zip(panel.tolist(), shared.tolist(), strict=True):
             record = found.get(int(shared_row)) if shared_row >= 0 else None
             if record is not None:
                 out[row] = replace(record, variant_index=row)
         return out
 
-    def by_identifier(self, identifier: str) -> VariantRecord | None:
+    def by_identifier(self, identifier: str) -> AnyVariantRecord | None:
         index = self.index_of(identifier)
         return None if index is None else self.by_index(index, expect_space=self.index_space)
 
-    def by_alid(self, parsed: ParsedAlid) -> VariantRecord | None:
+    def by_alid(self, parsed: ParsedAlid) -> AnyVariantRecord | None:
         return self._record(self._shared.by_alid(parsed))
 
-    def records(self) -> Iterator[VariantRecord]:
+    def records(self) -> Iterator[AnyVariantRecord]:
         """Every panel row, streamed in panel order, from one pass of the shared table."""
         wanted = iter(enumerate(self._dense_to_shared.tolist()))
         nxt = next(wanted, None)
@@ -320,10 +358,10 @@ class PanelVariantAxis:
                 "shared Variant Table does not hold in order"
             )
 
-    def all(self) -> list[VariantRecord]:
+    def all(self) -> list[AnyVariantRecord]:
         return list(self.records())
 
-    def range(self, chromosome: str, start: int, end: int) -> list[VariantRecord]:
+    def range(self, chromosome: str, start: int, end: int) -> list[AnyVariantRecord]:
         return [
             record
             for record in map(self._record, self._shared.range(chromosome, start, end))

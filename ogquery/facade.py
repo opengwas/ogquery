@@ -70,6 +70,8 @@ Ragged/molecular-QTL releases populate.
 
 from __future__ import annotations
 
+import logging
+import warnings
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import replace
 from functools import wraps
@@ -87,6 +89,7 @@ from ogquery.associations import (
     DenseGridReader,
     SubsetReader,
 )
+from ogquery.cpra_query import VariantMiss, VariantMissWarning
 from ogquery.csr import RaggedCSRReader
 from ogquery.enums import CompletionState, PrimaryStorageLayout
 from ogquery.format import carries_variant_aliases
@@ -104,6 +107,7 @@ from ogquery.resolve import resolve_rows
 from ogquery.rho import DenseRhoReader, OverflowOnlyAnalysisError
 from ogquery.top_hits import TierRows, TopHitTier, TopHitTiers
 
+log = logging.getLogger(__name__)
 
 def _ragged_tier_record(
     tier: TopHitTier,
@@ -354,13 +358,17 @@ def _stamped[F: Callable[..., Any]](read: F) -> F:
     def stamped(self: Any, *args: Any, **kwargs: Any) -> Associations:
         found: Associations = read(self, *args, **kwargs)
         where = f"{type(self).__name__}.{read.__name__}'s answer"
+        form = self._variant_axis.cpra_normal_form
         if len(found.variant_index) == 0:
             return replace(
-                found, variant_space=self.variant_space, analysis_space=self.analysis_space
+                found,
+                variant_space=self.variant_space,
+                analysis_space=self.analysis_space,
+                cpra_normal_form=form,
             )
         require_space(self.variant_space, found.variant_space, f"{where}'s variant_index")
         require_space(self.analysis_space, found.analysis_space, f"{where}'s analysis_index")
-        return found
+        return replace(found, cpra_normal_form=form)
 
     return cast(F, stamped)
 
@@ -415,6 +423,14 @@ class _StoreQueryBase:
         """Return all variants keyed by variant_index."""
         return _variants_table(self._variant_axis)
 
+    def _phewas_target(self, identifier: str) -> tuple[int | None, tuple[VariantMiss, ...]]:
+        """The one row `identifier` names (the lowest, where an rsID names several, as
+        `VariantAxis.index_of` chooses), and the diagnostics of a miss that is never bare
+        (spec §4.0): resolved as `lookup` resolves, so no query drops them."""
+        resolved = self._variant_axis.resolve_identifiers([identifier])
+        found = resolved.indices
+        return (int(found.min()) if len(found) else None), resolved.misses
+
     def variant_count(self) -> int:
         """The number of variants in the release (the Variant Axis's length)."""
         return int(self._variant_axis.n_variants)
@@ -426,7 +442,12 @@ class _StoreQueryBase:
         identifier the release lacks is absent, not an error.
         """
         axis = self._variant_axis
-        return _variant_rows(axis, axis.indices_by_identifiers(identifiers))
+        resolved = axis.resolve_identifiers(identifiers)
+        rows = _variant_rows(axis, resolved.indices)
+        for miss in resolved.misses:
+            log.warning("%s", VariantMissWarning(miss))
+            warnings.warn(VariantMissWarning(miss), stacklevel=2)
+        return rows
 
     def variants_in_range(self, chromosome: str, start: int, end: int) -> dict[int, dict[str, Any]]:
         """The `variants_table()` rows at a position in ``[start, end]`` on `chromosome`,
@@ -574,10 +595,10 @@ class StoreQuery(_StoreQueryBase):
     @_stamped
     def phewas(self, identifier: str, *, observed_only: bool = False) -> Associations:
         """Return one variant across all analyses."""
-        index = self._variant_axis.index_of(identifier)
+        index, misses = self._phewas_target(identifier)
         if index is None:
-            return Associations.empty()
-        return self._phewas_at(index, observed_only=observed_only)
+            return replace(Associations.empty(), misses=misses)
+        return replace(self._phewas_at(index, observed_only=observed_only), misses=misses)
 
     def _phewas_at(self, variant_index: int, *, observed_only: bool = False) -> Associations:
         """`phewas` for a variant already named by Store-local Variant Index.
@@ -617,11 +638,9 @@ class StoreQuery(_StoreQueryBase):
         """Return present associations for a specific variant × analysis set, Analysis-major."""
         # Row-index resolution only -- no VariantRecord materialisation, no
         # per-identifier variants.tsv.gz open (issue #3).
-        return self._lookup_at(
-            self._variant_axis.indices_by_identifiers(identifiers),
-            analysis_ids,
-            observed_only=observed_only,
-        )
+        resolved = self._variant_axis.resolve_identifiers(identifiers)
+        found = self._lookup_at(resolved.indices, analysis_ids, observed_only=observed_only)
+        return replace(found, misses=resolved.misses)
 
     def _lookup_at(
         self, rows: np.ndarray, analysis_ids: list[str], *, observed_only: bool = False
@@ -838,12 +857,13 @@ class RaggedStoreQuery(_StoreQueryBase):
     @_stamped
     def phewas(self, identifier: str, *, observed_only: bool = False) -> Associations:
         """All analyses that have an association for a given variant identifier."""
-        index = self._variant_axis.index_of(identifier)
+        index, misses = self._phewas_target(identifier)
         if index is None:
-            return self._empty()
-        return self._reader.read(
+            return replace(self._empty(), misses=misses)
+        read = self._reader.read(
             Cells.variants([index]), observed_only=observed_only, expect_spaces=self._reader.spaces
         )
+        return replace(read, misses=misses)
 
     @_stamped
     def top_hits(
@@ -891,15 +911,16 @@ class RaggedStoreQuery(_StoreQueryBase):
         resolves nothing yields the empty result.
         """
         analyses = [self._analysis_index(aid) for aid in analysis_ids]
-        found = self._variant_axis.indices_by_identifiers(identifiers)
-        if not len(found):
-            return self._empty()
-        wanted = np.array(sorted({int(i) for i in found}), dtype=np.int32)
-        return self._reader.read(
+        resolved = self._variant_axis.resolve_identifiers(identifiers)
+        if not len(resolved.indices):
+            return replace(self._empty(), misses=resolved.misses)
+        wanted = np.array(sorted({int(i) for i in resolved.indices}), dtype=np.int32)
+        read = self._reader.read(
             Cells.cross(wanted, analyses),
             observed_only=observed_only,
             expect_spaces=self._reader.spaces,
         )
+        return replace(read, misses=resolved.misses)
 
 
 class HybridStoreQuery(_StoreQueryBase):
@@ -1057,15 +1078,17 @@ class HybridStoreQuery(_StoreQueryBase):
 
     @_stamped
     def phewas(self, identifier: str, *, observed_only: bool = False) -> Associations:
-        index = self._variant_axis.index_of(identifier)
+        index, misses = self._phewas_target(identifier)
         if index is None:
-            return Associations.empty()
+            return replace(Associations.empty(), misses=misses)
         on_panel, rows = self._panel_split(np.array([index], dtype=np.int64))
         if on_panel[0]:
-            return self._remap_dense(
+            dense = self._remap_dense(
                 self._dense._phewas_at(int(rows[0]), observed_only=observed_only)
             )
-        return self._overflow_read(Cells.variants([index]), observed_only=observed_only)
+            return replace(dense, misses=misses)
+        overflow = self._overflow_read(Cells.variants([index]), observed_only=observed_only)
+        return replace(overflow, misses=misses)
 
     @_stamped
     def range_phewas(
@@ -1091,7 +1114,8 @@ class HybridStoreQuery(_StoreQueryBase):
         # holds never reaches a Dense Component whose own index lacks it (an
         # off-panel variant), which on a 0.2 release would consult `variant_aliases`.
         requested = [self._analysis_index(aid) for aid in analysis_ids]
-        shared = np.unique(self._variant_axis.indices_by_identifiers(identifiers)).astype(np.int64)
+        resolved = self._variant_axis.resolve_identifiers(identifiers)
+        shared = np.unique(resolved.indices).astype(np.int64)
         on_panel, rows = self._panel_split(shared)
         panel_rows = rows[on_panel]
         dense = self._remap_dense(
@@ -1099,13 +1123,16 @@ class HybridStoreQuery(_StoreQueryBase):
         )
         off_panel = [int(i) for i in shared[~on_panel]]
         if not off_panel:
-            return dense
+            return replace(dense, misses=resolved.misses)
         # Each requested Analysis's sorted segment is binary-searched for the
         # wanted variants, in ascending Analysis order (#252).
         overflow = self._overflow_read(
             Cells.cross(off_panel, sorted(set(requested))), observed_only=observed_only
         )
-        return _analysis_major(Associations.concat([dense, overflow]), requested)
+        return replace(
+            _analysis_major(Associations.concat([dense, overflow]), requested),
+            misses=resolved.misses,
+        )
 
     @_stamped
     def top_hits(

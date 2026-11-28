@@ -18,12 +18,17 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import IntEnum
 from functools import cached_property
-from typing import Any
+from itertools import chain
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from ogquery.guard import IndexSpace
 from ogquery.stats import AssociationStatistics, association_statistics
+
+if TYPE_CHECKING:
+    from ogquery.cpra_query import VariantMiss
+    from ogquery.format import CpraNormalForm
 
 
 class Status(IntEnum):
@@ -350,6 +355,14 @@ class Associations(Mapping[str, np.ndarray]):
     #: refuses.
     variant_space: IndexSpace | None = None
     analysis_space: IndexSpace | None = None
+    #: The release's `CpraNormalForm`, so a tool joining two answers can call
+    #: `require_joinable` (spec §19, §21.2); the query facade stamps it, None on a record
+    #: built by hand. Not a key of the mapping view.
+    cpra_normal_form: CpraNormalForm | None = None
+    #: The diagnostics of the identifiers asked that gave no row and are never bare (spec
+    #: §4.0, `VariantMiss`), in the order asked; empty when there are none. Not a key of
+    #: the mapping view.
+    misses: tuple[VariantMiss, ...] = ()
 
     def __post_init__(self) -> None:
         fields = {
@@ -482,6 +495,8 @@ class Associations(Mapping[str, np.ndarray]):
             None if self.n is None else self.n[index],
             self.variant_space,
             self.analysis_space,
+            self.cpra_normal_form,
+            self.misses,
         )
 
     def where(self, keep: np.ndarray) -> Associations:
@@ -511,6 +526,8 @@ class Associations(Mapping[str, np.ndarray]):
             vi, self.analysis_index, self.z, self.se, self.eaf, self.status, self.n,
             variant_space,
             self.analysis_space,
+            self.cpra_normal_form,
+            self.misses,
         )
 
     def in_genomic_order(self) -> Associations:
@@ -536,6 +553,12 @@ class Associations(Mapping[str, np.ndarray]):
                 f"joined: {sorted(map(str, spaces))}"
             )
         variant_space, analysis_space = next(iter(spaces))
+        forms = {p.cpra_normal_form for p in parts if p.cpra_normal_form is not None}
+        if len(forms) > 1:
+            raise ValueError(
+                "records of releases whose cpra_normal_form differs cannot be joined: "
+                f"{sorted(form.describe() for form in forms)}"
+            )
         return Associations(
             variant_index=_cat(parts, "variant_index"),
             analysis_index=_cat(parts, "analysis_index"),
@@ -546,6 +569,8 @@ class Associations(Mapping[str, np.ndarray]):
             n=_cat(parts, "n") if with_n else None,
             variant_space=variant_space,
             analysis_space=analysis_space,
+            cpra_normal_form=next(iter(forms), None),
+            misses=tuple(chain.from_iterable(p.misses for p in parts)),
         )
 
 

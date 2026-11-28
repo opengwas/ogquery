@@ -65,6 +65,18 @@ class MissingRsidIndex(FileNotFoundError):
     """A release whose `format_version` names its rows' rsIDs from the rsID index lacks it."""
 
 
+class RsidIndexNotYetSupported(NotImplementedError):
+    """An rsID was asked of, or named by, a 0.4.0 release. Its rsID index and alias index are
+    #524's, whose layout is not yet decided, so this build reads neither (spec §4.0)."""
+
+    def __init__(self, what: str) -> None:
+        super().__init__(
+            f"{what} on a format 0.4.0 release is not yet supported (#524): its rsID index "
+            "and alias index are specified by opengwas/opengwasdb#524, whose layout this "
+            "build does not guess. Ask by CPRA, or read a 0.3 release"
+        )
+
+
 class MalformedRsidIndex(ValueError):
     """An rsID index that cannot name a row's rsID: two files of unequal length, or a
     row named twice or outside the axis."""
