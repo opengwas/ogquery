@@ -9,8 +9,13 @@ reads anything else (ADR 0038 §2). What a writer stamps and refuses to write is
 from __future__ import annotations
 
 import logging
+import warnings
 from collections.abc import Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
+from typing import Any, Final, Protocol
+
+from ogquery.genome import SHA256_HEX
 
 log = logging.getLogger(__name__)
 
@@ -32,8 +37,12 @@ log = logging.getLogger(__name__)
 #: no ALID index and misread every ALID lookup, so 0.3.0 is a new series that an
 #: older package refuses by name (ADR 0041). #468-#472 add the rest of 0.3.0 in the
 #: same version: the position and `source_alid` sidecars, and what nothing reads.
+#:
+#: `0.4` since #517 (issue opengwas/ogquery#19): every key a CPRA and every statistic
+#: signed for ALT (spec §4.0, §5), on 0.3.0's features. A 0.3 reader would sign its
+#: statistics for the key's first allele, REF, so it refuses 0.4.0 by series (spec §21.2).
 SUPPORTED_FORMAT_VERSIONS: Mapping[tuple[int, ...], tuple[int, ...]] = MappingProxyType(
-    {(0, 1): (0,), (0, 2): (3,), (0, 3): (0,)}
+    {(0, 1): (0,), (0, 2): (3,), (0, 3): (0,), (0, 4): (0,)}
 )
 
 #: The format_versions this build writes, oldest first. A build stamps each release
@@ -59,7 +68,17 @@ SUPPORTED_FORMAT_VERSIONS: Mapping[tuple[int, ...], tuple[int, ...]] = MappingPr
 #: indels it cannot re-spell. The 0.2 versions stay in this table because a pass
 #: that adds arrays to a 0.2 release (`ogdb build-by-variant`) writes them, and a
 #: 0.2.2 or 0.2.3 source is completed.
-WRITTEN_FORMAT_VERSIONS: tuple[str, ...] = ("0.2.0", "0.2.1", "0.2.2", "0.2.3", "0.3.0")
+#: `0.4.0` since #517: CPRA keys and ALT-signed statistics (spec §4.0, §5, §21.3); written
+#: by the builders and Reference Completion once epic #525's engine slices land, and never
+#: by a rewrite or the converter. It is last: the indexes above name the 0.2 and 0.3 versions.
+WRITTEN_FORMAT_VERSIONS: tuple[str, ...] = (
+    "0.2.0",
+    "0.2.1",
+    "0.2.2",
+    "0.2.3",
+    "0.3.0",
+    "0.4.0",
+)
 
 #: The last 0.2 version: 0.2.2's reference-first indels with 0.2.3's SE count, every
 #: feature 0.3.0 keeps. The one version `ogdb rewrite-release` derives 0.3.0 from.
@@ -67,6 +86,9 @@ LAST_0_2_FORMAT_VERSION = WRITTEN_FORMAT_VERSIONS[3]
 
 #: The first version whose ALID index is the variable-length sidecar (ADR 0105).
 ALID_SIDECAR_FORMAT_VERSION = WRITTEN_FORMAT_VERSIONS[4]
+
+#: The first version whose keys are CPRAs and whose statistics are signed for ALT (spec §4.0).
+CPRA_FORMAT_VERSION = WRITTEN_FORMAT_VERSIONS[5]
 
 #: The first `format_version` whose indel ALIDs spell the reference allele first
 #: (ADR 0079). Every earlier one sorts an indel's alleles, so its deletion reads
@@ -90,6 +112,8 @@ def format_version_for(
     reference_first_indels: bool,
     records_se_out_of_range: bool = True,
     alid_sidecar: bool = True,
+    cpra_keys: bool = False,
+    signed_for_alt: bool = False,
 ) -> str:
     """The `format_version` a release this build writes is stamped: the lowest whose
     features it uses (spec §21.3). The one rule every writer stamps by -- the builders,
@@ -109,7 +133,25 @@ def format_version_for(
     release this build builds, completes or rewrites does; one it converts from 0.1.0
     does not. A release with the sidecar and without one of 0.2.3's features is no
     version, and is refused rather than stamped.
+    `cpra_keys` and `signed_for_alt`: its keys are CPRAs and its statistics are signed for
+    ALT, which 0.4.0 adds (spec §4.0, §5, §21.3) on 0.3.0's features. They go together: a
+    release with one and not the other is no version, and is refused rather than stamped.
     """
+    if cpra_keys != signed_for_alt:
+        raise ValueError(
+            "a release's keys are CPRAs exactly when its statistics are signed for ALT "
+            "(0.4.0, spec §21.3); this one has "
+            f"cpra_keys={cpra_keys} and signed_for_alt={signed_for_alt}"
+        )
+    if cpra_keys:
+        if not (reference_first_indels and records_se_out_of_range):
+            raise ValueError(
+                "a release whose keys are CPRAs is 0.4.0, which keeps 0.3.0's features: it "
+                "also counts the SEs left out (ADR 0108 §8); this one does not "
+                f"(reference_first_indels={reference_first_indels}, "
+                f"records_se_out_of_range={records_se_out_of_range})"
+            )
+        return CPRA_FORMAT_VERSION
     if alid_sidecar:
         if not (reference_first_indels and records_se_out_of_range):
             raise ValueError(
@@ -133,8 +175,21 @@ CURRENT_FORMAT_VERSION = format_version_for(carries_regions=False, reference_fir
 #: series-to-layout coupling is part of the format contract, so it lives beside
 #: the version tables rather than in each caller that needs it (#264 review).
 ZARR_FORMAT_BY_SERIES: Mapping[tuple[int, ...], int] = MappingProxyType(
-    {(0, 1): 2, (0, 2): 3, (0, 3): 3}
+    {(0, 1): 2, (0, 2): 3, (0, 3): 3, (0, 4): 3}
 )
+
+#: The first `format_version` whose keys are CPRAs, `chrom:pos:REF:ALT`, and whose statistics
+#: are signed for ALT: the series that names its sidecars `variant_cpra_*` and
+#: `variant_source_cpra_*` and its Variant Table columns `ref`, `alt`, `cpra` and
+#: `source_cpra` (spec §4.0, §21.5). Read by the release's series, never by which files
+#: exist (ADR 0105 §5).
+CPRA_SINCE = (0, 4, 0)
+
+
+def carries_cpra(version: str) -> bool:
+    """Whether a Store of ``version`` is keyed by CPRA (0.4.0 on), not by ALID (0.3 and
+    earlier), and so signs its statistics for ALT, not for the key's first allele."""
+    return parse_format_version(version) >= CPRA_SINCE
 
 #: The first `format_version` whose ALID index is the variable-length sidecar
 #: (`ogquery.alid_sidecar`, ADR 0105) and not the fixed-width pair.
@@ -366,3 +421,326 @@ def check_format_version(version: str, *, source: str = "release") -> None:
 
 def _series_text(series: tuple[int, ...]) -> str:
     return ".".join(str(part) for part in series)
+
+
+#: The vocabularies of a release's `cpra_normal_form` (spec §2, §21.2). A 0.4.0 release holds
+#: exactly `CPRA_NORMAL_FORM_VALUES`; the derived forms of older releases use the others.
+CPRA_NORMAL_FORM_VALUES: Mapping[str, str] = MappingProxyType(
+    {"alleles": "ref_alt", "signed_for": "alt", "indels": "left_aligned"}
+)
+
+#: The one reference assembly a 0.4.0 release has: GRCh38, the one a Byte Genome exists for
+#: (spec §4.0).
+CPRA_ASSEMBLY: Final = "GRCh38"
+
+
+class _Absent:
+    """The type of `ABSENT`: a manifest key that is not there, as distinct from one that is
+    `null` (spec §2 says an earlier release's `cpra_normal_form` is "absent, not `null`")."""
+
+    def __repr__(self) -> str:
+        return "ABSENT"
+
+
+ABSENT: Final = _Absent()
+
+
+@dataclass(frozen=True)
+class CpraSequence:
+    """The reference sequence a CPRA is relative to: its assembly and sequence digest."""
+
+    assembly: str
+    digest: str
+
+
+@dataclass(frozen=True)
+class CpraNormalForm:
+    """The form a release's keys and signs take (ADR 0108 §9, spec §21.2): which alleles a
+    key spells in which order, which allele a statistic is signed for, how indels are
+    spelt, and the sequence they were formed against (`None` where a stamp names none).
+
+    Two releases join only on equal forms (`require_joinable`)."""
+
+    alleles: str
+    signed_for: str
+    indels: str
+    sequence: CpraSequence | None
+
+    def describe(self) -> str:
+        sequence = (
+            "no recorded sequence"
+            if self.sequence is None
+            else f"{self.sequence.assembly} sequence {self.sequence.digest}"
+        )
+        return (
+            f"alleles={self.alleles}, signed_for={self.signed_for}, "
+            f"indels={self.indels}, {sequence}"
+        )
+
+
+#: The form of a 0.2.2 to 0.3.x release, derived from its stamp (spec §21.2).
+_ALID_FORM = CpraNormalForm(
+    "snv_sorted_indel_reference_first", "a1", "as_spelt", None
+)
+#: The form of a release before 0.2.2, or a converted one whose indels sort.
+_SORTED_FORM = CpraNormalForm("sorted", "a1", "as_spelt", None)
+#: The deviation a converted release lists when it sorts its indels (ADR 0108 §9).
+SORTED_INDELS_DEVIATION = "variant_table.indel_order"
+
+
+class UnsupportedCpraNormalForm(UnsupportedFormatVersion):
+    """A release's `cpra_normal_form` is absent where 0.4.0 requires it, present where an
+    earlier format forbids it, or holds a value outside spec §2's: refused at open, as a
+    value outside a controlled vocabulary is (spec §21.2)."""
+
+
+class CpraNormalFormMismatch(ValueError):
+    """Two releases whose `CpraNormalForm`s differ were asked to join. A join on the key
+    string would match an SNV whose REF sorts first and mis-sign it; there is no override
+    (ADR 0108 §9)."""
+
+
+class MixedCpraNormalForms(UserWarning):
+    """A release was opened whose form differs from one already open in this process.
+    Opening is not a join, so it warns; a caller that joins makes it an error with
+    ``warnings.simplefilter("error", MixedCpraNormalForms)``."""
+
+
+class _HasManifestFields(Protocol):
+    @property
+    def format_version(self) -> str: ...
+    @property
+    def reference_assembly(self) -> str: ...
+    @property
+    def provenance(self) -> dict[str, Any]: ...
+    @property
+    def cpra_normal_form_entry(self) -> Any: ...
+
+
+def cpra_normal_form(manifest: _HasManifestFields) -> CpraNormalForm:
+    """A release's `CpraNormalForm`: a 0.4.0 release's manifest entry, checked against spec
+    §2, and for an earlier release the form its stamp gives (spec §21.2). The one place the
+    stamp is read for it. Raises `UnsupportedCpraNormalForm` for an entry 0.4.0 does not
+    allow, and for one an earlier release carries."""
+    entry = manifest.cpra_normal_form_entry
+    version = manifest.format_version
+    if not carries_cpra(version):
+        if entry is not ABSENT:
+            raise UnsupportedCpraNormalForm(
+                f"a release of format_version {version} declares cpra_normal_form, which "
+                "only 0.4.0 and later releases carry (spec §2): its form is derived from "
+                "its stamp"
+            )
+        return _derived_form(manifest)
+    return _declared_form(entry, manifest)
+
+
+def _derived_form(manifest: _HasManifestFields) -> CpraNormalForm:
+    converted = manifest.provenance.get("converted_from")
+    deviations = converted.get("deviations") if isinstance(converted, dict) else None
+    listed = (
+        isinstance(deviations, (list, tuple)) and SORTED_INDELS_DEVIATION in deviations
+    )
+    if listed or not indels_reference_first(manifest.format_version):
+        return _SORTED_FORM
+    return _ALID_FORM
+
+
+def _declared_form(entry: Any, manifest: _HasManifestFields) -> CpraNormalForm:
+    version = manifest.format_version
+    if entry is ABSENT or entry is None:
+        raise UnsupportedCpraNormalForm(
+            f"a release of format_version {version} must declare cpra_normal_form (spec "
+            "§2), and this one does not"
+        )
+    if manifest.reference_assembly != CPRA_ASSEMBLY:
+        raise UnsupportedCpraNormalForm(
+            f"a release of format_version {version} has reference_assembly "
+            f"{manifest.reference_assembly!r}, but a 0.4.0 release's is {CPRA_ASSEMBLY} (spec "
+            "§4.0): no other assembly has a Byte Genome"
+        )
+    expected = dict(CPRA_NORMAL_FORM_VALUES)
+    if not isinstance(entry, dict) or set(entry) != {*expected, "sequence"}:
+        raise UnsupportedCpraNormalForm(
+            f"cpra_normal_form of a {version} release must be an object of exactly "
+            f"{sorted([*expected, 'sequence'])} (spec §2); this one is {entry!r}"
+        )
+    for key, value in expected.items():
+        if entry[key] != value or not isinstance(entry[key], str):
+            raise UnsupportedCpraNormalForm(
+                f"cpra_normal_form.{key} of a {version} release must be {value!r} (spec §2); "
+                f"this one is {entry[key]!r}"
+            )
+    sequence = entry["sequence"]
+    if not isinstance(sequence, dict) or set(sequence) != {"assembly", "digest"}:
+        raise UnsupportedCpraNormalForm(
+            "cpra_normal_form.sequence must be an object of exactly ['assembly', 'digest'] "
+            f"(spec §2); this one is {sequence!r}"
+        )
+    assembly, digest = sequence["assembly"], sequence["digest"]
+    if assembly != manifest.reference_assembly or not isinstance(assembly, str):
+        raise UnsupportedCpraNormalForm(
+            f"cpra_normal_form.sequence.assembly is {assembly!r}, but the release's "
+            f"reference_assembly is {manifest.reference_assembly!r}; spec §2 requires them equal"
+        )
+    if not isinstance(digest, str) or not SHA256_HEX.fullmatch(digest):
+        raise UnsupportedCpraNormalForm(
+            "cpra_normal_form.sequence.digest must be 64 lower-case hex characters "
+            f"(spec §2); this one is {digest!r}"
+        )
+    form = CpraNormalForm(
+        entry["alleles"], entry["signed_for"], entry["indels"], CpraSequence(assembly, digest)
+    )
+    _require_declarations(manifest, form)
+    return form
+
+
+_REFERENCE_SEQUENCE_KEYS = ("assembly", "digest", "sha256", "format", "format_version", "path")
+
+
+def _require_declarations(manifest: _HasManifestFields, form: CpraNormalForm) -> None:
+    """A 0.4.0 release MUST also declare `provenance.reference_sequence` and
+    `provenance.admission`, each of the JSON types spec §2 gives. Their content is the engine's
+    validation rules' (§20.0a); here only what a reader relies on is checked: the entries are
+    there, their shape and types, and the two equalities §2 states."""
+    provenance = manifest.provenance
+    where = "provenance.reference_sequence"
+    sequence = provenance.get("reference_sequence", ABSENT)
+    if not isinstance(sequence, dict) or set(sequence) != {*_REFERENCE_SEQUENCE_KEYS, "source"}:
+        raise UnsupportedCpraNormalForm(
+            f"a 0.4.0 release must declare {where}, an object of exactly "
+            f"{sorted([*_REFERENCE_SEQUENCE_KEYS, 'source'])} (spec §2); this one is "
+            f"{sequence!r}"
+        )
+    for key in _REFERENCE_SEQUENCE_KEYS:
+        if not isinstance(sequence[key], str):
+            raise UnsupportedCpraNormalForm(
+                f"{where}.{key} must be a JSON string (spec §2); this one is {sequence[key]!r}"
+            )
+    if not isinstance(sequence["source"], dict):
+        raise UnsupportedCpraNormalForm(
+            f"{where}.source must be an object (spec §2); this one is {sequence['source']!r}"
+        )
+    if form.sequence is not None and sequence["assembly"] != form.sequence.assembly:
+        raise UnsupportedCpraNormalForm(
+            f"{where}.assembly is {sequence['assembly']!r}, not the release's "
+            f"{form.sequence.assembly!r} (spec §2)"
+        )
+    if form.sequence is not None and sequence["digest"] != form.sequence.digest:
+        raise UnsupportedCpraNormalForm(
+            f"{where}.digest is {sequence['digest']!r}, not cpra_normal_form.sequence.digest "
+            f"{form.sequence.digest!r} (spec §2 requires them equal)"
+        )
+    if not SHA256_HEX.fullmatch(sequence["sha256"]):
+        raise UnsupportedCpraNormalForm(
+            f"{where}.sha256 must be 64 lower-case hex characters (spec §2); this one is "
+            f"{sequence['sha256']!r}"
+        )
+    _require_admission(provenance.get("admission", ABSENT))
+
+
+def _require_admission(admission: Any) -> None:
+    where = "provenance.admission"
+    if not isinstance(admission, dict) or set(admission) != {"rules", "dropped"}:
+        raise UnsupportedCpraNormalForm(
+            f"a 0.4.0 release must declare {where}, an object of exactly ['dropped', 'rules'] "
+            f"(spec §2); this one is {admission!r}"
+        )
+    if not isinstance(admission["rules"], str):
+        raise UnsupportedCpraNormalForm(
+            f"{where}.rules must be a JSON string (spec §2); this one is {admission['rules']!r}"
+        )
+    dropped = admission["dropped"]
+    if not isinstance(dropped, dict) or any(
+        not isinstance(reason, str)
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < 0
+        for reason, count in dropped.items()
+    ):
+        raise UnsupportedCpraNormalForm(
+            f"{where}.dropped must be an object of reasons to JSON integers of at least 0 "
+            f"(spec §2); this one is {dropped!r}"
+        )
+
+
+def cpra_declarations(manifest: _HasManifestFields) -> tuple[Any, Any, Any]:
+    """What a 0.4.0 manifest declares as spec §2 says a Hybrid's two manifests must hold equal:
+    `cpra_normal_form`, `provenance.reference_sequence` and `provenance.admission`, each
+    `ABSENT` where the manifest has none."""
+    return (
+        manifest.cpra_normal_form_entry,
+        manifest.provenance.get("reference_sequence", ABSENT),
+        manifest.provenance.get("admission", ABSENT),
+    )
+
+
+def require_equal_declarations(
+    a: _HasManifestFields, a_name: str, b: _HasManifestFields, b_name: str
+) -> None:
+    """Refuse (`UnsupportedCpraNormalForm`) two manifests of one Hybrid, `a_name` and `b_name`
+    being where each was read, that declare other than the same (spec §2: "each equal in the
+    two"). Judged before either is read for its own form."""
+    if cpra_declarations(a) != cpra_declarations(b):
+        raise UnsupportedCpraNormalForm(
+            f"{a_name} and {b_name} are one Hybrid, whose cpra_normal_form, "
+            "provenance.reference_sequence and provenance.admission must each be equal in its "
+            "two manifests (spec §2), and they are not"
+        )
+
+
+class _HasForm(Protocol):
+    @property
+    def cpra_normal_form(self) -> CpraNormalForm: ...
+    @property
+    def release_id(self) -> str: ...
+
+
+def require_joinable(a: _HasForm, b: _HasForm) -> None:
+    """Raise `CpraNormalFormMismatch` unless releases ``a`` and ``b`` (a `StoreRelease`, or
+    any reader exposing `cpra_normal_form` and `release_id`) have equal forms. Every join
+    calls it before comparing a key (spec §21.2). There is no override: the remedy is to
+    rebuild the older release."""
+    form_a, form_b = a.cpra_normal_form, b.cpra_normal_form
+    if form_a == form_b:
+        return
+    raise CpraNormalFormMismatch(
+        f"cannot join release {a.release_id!r} ({form_a.describe()}) with release "
+        f"{b.release_id!r} ({form_b.describe()}): their keys or signs differ, so a join "
+        "on the key would match an SNV whose REF sorts first and mis-sign it. Rebuild the "
+        "older release from its sources at format 0.4.0 (spec §21.2); there is no override"
+    )
+
+
+#: Every release opened in this process, by form: the first release of each form. Process
+#: wide, as spec §21.2 says; `_forget_opened_forms` clears it (tests).
+_OPENED: dict[CpraNormalForm, str] = {}
+_WARNED_PAIRS: set[frozenset[CpraNormalForm]] = set()
+
+
+def record_opened(form: CpraNormalForm, release_id: str) -> None:
+    """Record that a release of ``form`` was opened, warning `MixedCpraNormalForms` once per
+    pair of forms when another form is already open. Called by `open_release` and by the LD
+    Store's open (#462)."""
+    for other_form, other_id in list(_OPENED.items()):
+        pair = frozenset((form, other_form))
+        if other_form == form or pair in _WARNED_PAIRS:
+            continue
+        message = (
+            f"release {release_id!r} ({form.describe()}) is open beside release "
+            f"{other_id!r} ({other_form.describe()}): their forms differ, so a join of the two "
+            "is refused (require_joinable). To make that an error, use "
+            'warnings.simplefilter("error", MixedCpraNormalForms)'
+        )
+        log.warning(message)
+        warnings.warn(message, MixedCpraNormalForms, stacklevel=3)
+        # Remembered only once the warning has been issued: a caller that makes it an error
+        # is refused again on retry, never let through (ADR 0108 §9).
+        _WARNED_PAIRS.add(pair)
+    _OPENED.setdefault(form, release_id)
+
+
+def _forget_opened_forms() -> None:
+    """Clear the registry `record_opened` keeps (for tests; nothing else forgets)."""
+    _OPENED.clear()
+    _WARNED_PAIRS.clear()

@@ -57,8 +57,8 @@ FORMAT_VERSION: Final = "1.0"
 SIDECAR_SUFFIX: Final = ".json"
 #: How many bytes a hash reads at a time.
 _HASH_CHUNK = 1 << 24
-#: A SHA-256 as the sidecar records one.
-_SHA256: Final = re.compile(r"[0-9a-f]{64}")
+#: A SHA-256 as a sidecar or a manifest records one: 64 lower-case hex characters.
+SHA256_HEX: Final = re.compile(r"[0-9a-f]{64}")
 #: The IUPAC nucleotide codes, upper-cased: every base a byte genome stores.
 IUPAC_BASES: Final = b"ACGTUNRYSWKMBDHV"
 
@@ -519,7 +519,7 @@ def _checksum(sidecar: Path, document: dict[str, Any], key: str) -> str:
     """A SHA-256 the sidecar records: 64 lower-case hex characters, or the sidecar is
     refused. Whether it is the right one is `verify`'s question."""
     value = _field(sidecar, document, key, str)
-    if not _SHA256.fullmatch(value):
+    if not SHA256_HEX.fullmatch(value):
         raise UnreadableByteGenome(
             f"{sidecar}: {key!r} is {value!r}, not a SHA-256 in 64 lower-case hex characters"
         )
