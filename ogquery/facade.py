@@ -70,9 +70,11 @@ Ragged/molecular-QTL releases populate.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from dataclasses import replace
+from functools import wraps
 from pathlib import Path
-from typing import Any, NoReturn, Self
+from typing import Any, NoReturn, Self, cast
 
 import numpy as np
 
@@ -189,7 +191,7 @@ def _rho_pairs(reader: DenseRhoReader, resolved: list[tuple[str, int]]) -> dict[
             aid_b, idx_b = resolved[y]
             if idx_a == idx_b:
                 continue
-            r, n = reader.pair(idx_a, idx_b)
+            r, n = reader.pair(idx_a, idx_b, expect_release_id=reader.release_id)
             out_a.append(aid_a)
             out_b.append(aid_b)
             out_rho.append(r)
@@ -225,7 +227,7 @@ def _rho_row_answer(
     """`rho_row()`'s answer for the Analysis at `idx`, against every other but `leave_out`."""
     if reader is None:
         return _empty_rho_row_result()
-    rho_vals, n_vals = reader.row(idx)
+    rho_vals, n_vals = reader.row(idx, expect_release_id=reader.release_id)
     others = [i for i in range(reader.n_analyses) if i != idx and i not in leave_out]
     return {
         "analysis_id": np.array([id_by_index[i]["analysis_id"] for i in others], dtype=object),
@@ -250,7 +252,9 @@ def _rho_matrix_answer(
             for i in range(reader.n_analyses)
             if i not in leave_out
         ]
-    rho_mat, n_mat = reader.matrix([idx for _, idx in resolved])
+    rho_mat, n_mat = reader.matrix(
+        [idx for _, idx in resolved], expect_release_id=reader.release_id
+    )
     return {
         "analysis_id": np.array([aid for aid, _ in resolved], dtype=object),
         "rho": rho_mat.astype("float32"),
@@ -272,7 +276,7 @@ def _variant_rows(variant_axis: AnyVariantAxis, rows: np.ndarray) -> dict[int, d
     """The `variants_table()` rows for `rows` alone, keyed by variant_index, ascending:
     the axis's one projection of a row (`rows_by_indices`), so a 0.3.0 release answers
     from its sidecars, `source_alid` included (#470), and no second index is built."""
-    return variant_axis.rows_by_indices(rows)
+    return variant_axis.rows_by_indices(rows, expect_release_id=variant_axis.release_id)
 
 
 def _is_completed(store: StoreRelease) -> bool:
@@ -331,6 +335,19 @@ def _ragged_top_hits(
     return reader.read(Cells.positions(positions), observed_only=observed_only)
 
 
+
+def _stamped[F: Callable[..., Any]](read: F) -> F:
+    """A query method whose `Associations` answer is stamped with the facade's `release_id`
+    (`ogquery.guard`): the release its indices are scoped to."""
+
+    @wraps(read)
+    def stamped(self: Any, *args: Any, **kwargs: Any) -> Associations:
+        found: Associations = read(self, *args, **kwargs)
+        return replace(found, release_id=self.release_id)
+
+    return cast(F, stamped)
+
+
 class _StoreQueryBase:
     """What every adapter answers the same way: its tables, result resolution,
     and the context manager. `analyses_table()` returns every `analyses.tsv`
@@ -339,6 +356,13 @@ class _StoreQueryBase:
 
     _analyses: AnalysesIndex
     _variant_axis: AnyVariantAxis
+
+    @property
+    def release_id(self) -> str:
+        """The release this facade reads: what its answers' indices are scoped to, and
+        what `expect_release_id=` of an entry point that takes an index is checked against
+        (`ogquery.guard`)."""
+        return self._variant_axis.release_id
 
     def close(self) -> None:
         """Close the facade. Its Variant Axis closes too, letting go of every memory map
@@ -453,7 +477,9 @@ class StoreQuery(_StoreQueryBase):
             requires_mask=_is_completed(store),
         )
         self._rho_reader: DenseRhoReader | None = (
-            DenseRhoReader(self._root["rho"], self._grid.n_analyses)
+            DenseRhoReader(
+                self._root["rho"], self._grid.n_analyses, release_id=self._variant_axis.release_id
+            )
             if "rho" in self._root
             else None
         )
@@ -469,6 +495,7 @@ class StoreQuery(_StoreQueryBase):
         loading the packed arrays a second time (#496)."""
         return self._rho_reader
 
+    @_stamped
     def analysis(
         self,
         analysis_id: str,
@@ -508,6 +535,7 @@ class StoreQuery(_StoreQueryBase):
         col = self._analysis_index(analysis_id)
         return subset.read(Cells.analysis(col), observed_only=observed_only)
 
+    @_stamped
     def phewas(self, identifier: str, *, observed_only: bool = False) -> Associations:
         """Return one variant across all analyses."""
         index = self._variant_axis.index_of(identifier)
@@ -522,6 +550,7 @@ class StoreQuery(_StoreQueryBase):
         """
         return self._grid.read(Cells.variants([variant_index]), observed_only=observed_only)
 
+    @_stamped
     def range_phewas(
         self, chromosome: str, start: int, end: int, *, observed_only: bool = False
     ) -> Associations:
@@ -539,6 +568,7 @@ class StoreQuery(_StoreQueryBase):
             return Associations.empty()
         return self._grid.read(Cells.variants(rows), observed_only=observed_only)
 
+    @_stamped
     def lookup(
         self, identifiers: list[str], analysis_ids: list[str], *, observed_only: bool = False
     ) -> Associations:
@@ -566,6 +596,7 @@ class StoreQuery(_StoreQueryBase):
         # rows × cols, not the full analysis width per row (issue 052).
         return self._grid.read(Cells.cross(rows, cols), observed_only=observed_only)
 
+    @_stamped
     def top_hits(
         self, *, analysis_id: str | None = None, threshold: float = 5e-8,
         limit: int | None = None, observed_only: bool = False,
@@ -682,6 +713,7 @@ class RaggedStoreQuery(_StoreQueryBase):
         self._variant_axis.close()
 
 
+    @_stamped
     def analysis(
         self,
         analysis_id: str,
@@ -700,6 +732,7 @@ class RaggedStoreQuery(_StoreQueryBase):
         idx = self._analysis_index(analysis_id)
         return self._reader.read(Cells.analysis(idx), observed_only=observed_only)
 
+    @_stamped
     def range_phewas(
         self, chromosome: str, start: int, end: int, *, observed_only: bool = False
     ) -> Associations:
@@ -726,6 +759,7 @@ class RaggedStoreQuery(_StoreQueryBase):
                 matches.append(index)
         return matches
 
+    @_stamped
     def range_by_analysis(
         self, chromosome: str, start: int, end: int, *, observed_only: bool = False
     ) -> Associations:
@@ -735,6 +769,7 @@ class RaggedStoreQuery(_StoreQueryBase):
             return self._empty()
         return self._reader.read(Cells.analyses(analysis_indices), observed_only=observed_only)
 
+    @_stamped
     def phewas(self, identifier: str, *, observed_only: bool = False) -> Associations:
         """All analyses that have an association for a given variant identifier."""
         index = self._variant_axis.index_of(identifier)
@@ -742,6 +777,7 @@ class RaggedStoreQuery(_StoreQueryBase):
             return self._empty()
         return self._reader.read(Cells.variants([index]), observed_only=observed_only)
 
+    @_stamped
     def top_hits(
         self, *, analysis_id: str | None = None, threshold: float = 5e-8,
         limit: int | None = None, observed_only: bool = False,
@@ -769,6 +805,7 @@ class RaggedStoreQuery(_StoreQueryBase):
         )
         return hits.head(limit)
 
+    @_stamped
     def lookup(
         self, identifiers: list[str], analysis_ids: list[str], *, observed_only: bool = False
     ) -> Associations:
@@ -827,7 +864,9 @@ class HybridStoreQuery(_StoreQueryBase):
         # fall out of step with the shared table (#481).
         self._dense = StoreQuery(
             self._dense_store,
-            variant_axis=PanelVariantAxis(shared, self._dense_to_shared),
+            variant_axis=PanelVariantAxis(
+                shared, self._dense_to_shared, release_id=store.manifest.release_id
+            ),
             analyses=self._analyses,
         )
         self._overflow.open_variant_index(self._variant_axis.n_variants)
@@ -891,6 +930,7 @@ class HybridStoreQuery(_StoreQueryBase):
         return self._overflow.read(cells, observed_only=observed_only)
 
     # ── public query surface ─────────────────────────────────────────────────
+    @_stamped
     def analysis(
         self,
         analysis_id: str,
@@ -931,6 +971,7 @@ class HybridStoreQuery(_StoreQueryBase):
         overflow = self._overflow_read(Cells.analysis(index), observed_only=observed_only)
         return Associations.concat([dense, overflow])
 
+    @_stamped
     def phewas(self, identifier: str, *, observed_only: bool = False) -> Associations:
         index = self._variant_axis.index_of(identifier)
         if index is None:
@@ -942,6 +983,7 @@ class HybridStoreQuery(_StoreQueryBase):
             )
         return self._overflow_read(Cells.variants([index]), observed_only=observed_only)
 
+    @_stamped
     def range_phewas(
         self, chromosome: str, start: int, end: int, *, observed_only: bool = False
     ) -> Associations:
@@ -957,6 +999,7 @@ class HybridStoreQuery(_StoreQueryBase):
         overflow = self._overflow_read(Cells.variants(off_panel), observed_only=observed_only)
         return Associations.concat([dense, overflow])
 
+    @_stamped
     def lookup(
         self, identifiers: list[str], analysis_ids: list[str], *, observed_only: bool = False
     ) -> Associations:
@@ -980,6 +1023,7 @@ class HybridStoreQuery(_StoreQueryBase):
         )
         return _analysis_major(Associations.concat([dense, overflow]), requested)
 
+    @_stamped
     def top_hits(
         self, *, analysis_id: str | None = None, threshold: float = 5e-8,
         limit: int | None = None, observed_only: bool = False,

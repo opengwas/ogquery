@@ -208,8 +208,11 @@ class StoreRelease(ReleasePaths):
     def top_hit_tiers(self, root: Any = None) -> TopHitTiers:
         """This release's Top-Hit tiers, read from `root` (its `data.zarr`, opened here if
         None), knowing which tier's Clumps its manifest declares (spec §2, §18.1)."""
-        return TopHitTiers(self.arrays() if root is None else root,
-                           clumps=self.manifest.clumps)
+        return TopHitTiers(
+            self.arrays() if root is None else root,
+            release_id=self.manifest.release_id,
+            clumps=self.manifest.clumps,
+        )
 
     def variant_axis(self, *, aliases: bool) -> AnyVariantAxis:
         """This release's Variant Axis; `aliases` also consults `variant_aliases`. For a
@@ -221,6 +224,7 @@ class StoreRelease(ReleasePaths):
             return PanelVariantAxis(
                 root.own_variant_axis(aliases=False),
                 np.load(self.path / DENSE_TO_SHARED_FILENAME, mmap_mode="r"),
+                release_id=root.manifest.release_id,
             )
         return self.own_variant_axis(aliases=aliases)
 
@@ -234,7 +238,12 @@ class StoreRelease(ReleasePaths):
         else:
             # 0.3.0 reads its sidecars, never the table (ADR 0105 §7, §8, #474).
             table = NoVariantTable(self.path)
-        return VariantAxis(self.path, table, format_version=self.manifest.format_version)
+        return VariantAxis(
+            self.path,
+            table,
+            format_version=self.manifest.format_version,
+            release_id=self.manifest.release_id,
+        )
 
     def query(self) -> StoreQuery | RaggedStoreQuery | HybridStoreQuery:
         """The query facade over this release, by its layout (ADR 0033)."""

@@ -308,6 +308,39 @@ class Reference:
     last: dict[str, Any]
     narrowed: dict[str, Any] | None = None
 
+    def to_json(self) -> dict[str, Any]:
+        """The reference as JSON holds it, so a proof can carry it across processes: every
+        field, the index maps included, and `from_json` reads it back equal."""
+        return {
+            "analyses": dict(self.analyses),
+            "variants": dict(self.variants),
+            "ids": list(self.ids),
+            "identifiers": list(self.identifiers),
+            "probed": list(self.probed),
+            "ranges": {name: list(asked) for name, asked in self.ranges.items()},
+            "first": dict(self.first),
+            "last": dict(self.last),
+            "narrowed": self.narrowed,
+        }
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> Reference:
+        """A reference written by `to_json`. A field it lacks is an error, not a default."""
+        return cls(
+            analyses={str(k): int(v) for k, v in data["analyses"].items()},
+            variants={str(k): int(v) for k, v in data["variants"].items()},
+            ids=[str(a) for a in data["ids"]],
+            identifiers=[str(i) for i in data["identifiers"]],
+            probed=[str(a) for a in data["probed"]],
+            ranges={
+                str(name): (str(c), int(start), int(end))
+                for name, (c, start, end) in data["ranges"].items()
+            },
+            first=dict(data["first"]),
+            last=dict(data["last"]),
+            narrowed=None if data["narrowed"] is None else dict(data["narrowed"]),
+        )
+
 
 def reference_of(q: Any, variants: dict[int, dict[str, Any]] | None = None) -> Reference:
     """The questions `q`'s release poses: the reference an unprojected release is its own

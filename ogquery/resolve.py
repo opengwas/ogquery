@@ -38,6 +38,7 @@ import numpy as np
 
 from ogquery.analyses import AnalysesIndex
 from ogquery.associations.record import statistics_of
+from ogquery.guard import require_release
 from ogquery.panel_axis import AnyVariantAxis
 
 
@@ -62,13 +63,31 @@ def resolve_rows(
     filled with a placeholder: resolving it is the expensive part of this
     join at scale. `eaf` is always present -- it is already in `result`, so
     resolving it costs nothing and a missing cell is the same "." (#136).
+
+    A `result` is refused unless it was read from the release `variant_axis` belongs to
+    (`ogquery.guard`): its indices are scoped to that release, and another's names other
+    Analyses and variants. The check is made now, not at the first row.
     """
+    release_id = variant_axis.release_id
+    require_release(release_id, getattr(result, "release_id", None), "the result")
+    return _rows(analyses, variant_axis, result, include_variant_info)
+
+
+def _rows(
+    analyses: AnalysesIndex,
+    variant_axis: AnyVariantAxis,
+    result: Mapping[str, np.ndarray],
+    include_variant_info: bool,
+) -> Iterator[dict[str, object]]:
+    release_id = variant_axis.release_id
     analysis_rows = analyses.all()
     variant_index = result["variant_index"]
     derived = statistics_of(result)
 
-    identity = variant_axis.identity_by_indices(variant_index)
-    info = _variant_info(variant_axis, variant_index) if include_variant_info else {}
+    identity = variant_axis.identity_by_indices(variant_index, expect_release_id=release_id)
+    info = (
+        _variant_info(variant_axis, variant_index, release_id) if include_variant_info else {}
+    )
 
     for i in range(len(variant_index)):
         analysis = analysis_rows[int(result["analysis_index"][i])]
@@ -91,13 +110,15 @@ def resolve_rows(
 
 
 def _variant_info(
-    variant_axis: AnyVariantAxis, variant_index: np.ndarray
+    variant_axis: AnyVariantAxis, variant_index: np.ndarray, release_id: str
 ) -> dict[str, np.ndarray]:
     """The variant info a row resolved with it carries: each row's rsID and `source_alid`,
     None where it has none, which the row spells ``.``."""
     return {
-        "rsid": variant_axis.rsids_by_indices(variant_index),
-        "source_alid": variant_axis.source_alids_by_indices(variant_index),
+        "rsid": variant_axis.rsids_by_indices(variant_index, expect_release_id=release_id),
+        "source_alid": variant_axis.source_alids_by_indices(
+            variant_index, expect_release_id=release_id
+        ),
     }
 
 

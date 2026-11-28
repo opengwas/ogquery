@@ -35,6 +35,7 @@ import numpy as np
 
 from ogquery.alid import ParsedAlid
 from ogquery.alid_index import ABSENT, AlidIndex
+from ogquery.guard import require_release
 from ogquery.hybrid import DenseComponentSharesAxis, panel_rows
 from ogquery.npy_sidecar import release_maps
 from ogquery.variant_axis import (
@@ -87,7 +88,12 @@ class PanelAlidIndex:
 class PanelVariantAxis:
     """The shared `VariantAxis` of a 0.3.0 Hybrid, in its Dense Component's panel rows."""
 
-    def __init__(self, shared: VariantAxis, dense_to_shared: np.ndarray) -> None:
+    def __init__(
+        self, shared: VariantAxis, dense_to_shared: np.ndarray, *, release_id: str
+    ) -> None:
+        #: The release whose panel rows these are (`ogquery.guard`); not the shared axis's,
+        #: which a Hybrid's Dense Component reads under the Hybrid's id.
+        self.release_id = release_id
         self._shared = shared
         self._dense_to_shared = np.asarray(dense_to_shared)
         self.store_path = shared.store_path
@@ -190,59 +196,93 @@ class PanelVariantAxis:
     def range_indices(self, chromosome: str, start: int, end: int) -> np.ndarray:
         return self._to_panel(self._shared.range_indices(chromosome, start, end))
 
-    def identity_by_indices(self, variant_index: np.ndarray) -> dict[str, np.ndarray]:
+    def identity_by_indices(
+        self, variant_index: np.ndarray,
+        *,
+        expect_release_id: str,
+    ) -> dict[str, np.ndarray]:
+        require_release(self.release_id, expect_release_id, "a variant index")
         shared = self._to_shared(variant_index)
         if (shared < 0).any():
             outside = int(np.asarray(variant_index).reshape(-1)[shared < 0][0])
             raise ValueError(f"no variant row at index {outside}")
-        return self._shared.identity_by_indices(shared)
+        return self._shared.identity_by_indices(shared, expect_release_id=self._shared.release_id)
 
-    def rsids_by_indices(self, variant_index: np.ndarray) -> np.ndarray:
+    def rsids_by_indices(self, variant_index: np.ndarray, *, expect_release_id: str) -> np.ndarray:
         """Each panel row's rsID; None for one that names none or lies outside the panel."""
+        require_release(self.release_id, expect_release_id, "a variant index")
         shared = self._to_shared(variant_index)
         out = np.full(shared.size, None, dtype=object)
         inside = shared >= 0
         if inside.any():
-            out[inside] = self._shared.rsids_by_indices(shared[inside])
+            out[inside] = self._shared.rsids_by_indices(
+                shared[inside], expect_release_id=self._shared.release_id
+            )
         return out
 
-    def source_alids_by_indices(self, variant_index: np.ndarray) -> np.ndarray:
+    def source_alids_by_indices(
+        self, variant_index: np.ndarray,
+        *,
+        expect_release_id: str,
+    ) -> np.ndarray:
         """Each panel row's `source_alid`, the shared row's (#470); None for one that has
         none or lies outside the panel."""
+        require_release(self.release_id, expect_release_id, "a variant index")
         shared = self._to_shared(variant_index)
         out = np.full(shared.size, None, dtype=object)
         inside = shared >= 0
         if inside.any():
-            out[inside] = self._shared.source_alids_by_indices(shared[inside])
+            out[inside] = self._shared.source_alids_by_indices(
+                shared[inside], expect_release_id=self._shared.release_id
+            )
         return out
 
     def variants_table(self) -> dict[int, dict[str, Any]]:
         """Every panel row's `variants_table()` row: `rows_by_indices` of every row."""
-        return self.rows_by_indices(np.arange(self.n_variants, dtype=np.int64))
+        return self.rows_by_indices(
+            np.arange(self.n_variants, dtype=np.int64), expect_release_id=self.release_id
+        )
 
-    def rows_by_indices(self, rows: np.ndarray) -> dict[int, dict[str, Any]]:
+    def rows_by_indices(
+        self, rows: np.ndarray,
+        *,
+        expect_release_id: str,
+    ) -> dict[int, dict[str, Any]]:
         """The `variants_table()` rows of panel rows `rows`, keyed by panel row, ascending:
         each its shared row's (`VariantAxis.rows_by_indices`), `source_alid` included. A
         row outside the panel is refused."""
+        require_release(self.release_id, expect_release_id, "a variant index")
         panel = np.unique(np.asarray(rows, dtype=np.int64))
         shared = self._to_shared(panel)
         if (shared < 0).any():
             raise ValueError(f"no variant row at index {int(panel[shared < 0][0])}")
-        found = self._shared.rows_by_indices(shared)
+        found = self._shared.rows_by_indices(shared, expect_release_id=self._shared.release_id)
         return {
             int(row): found[int(shared_row)]
             for row, shared_row in zip(panel.tolist(), shared.tolist(), strict=True)
         }
 
     # ── the record reads: the shared axis's rows, its `source_alid` included (#470) ──
-    def by_index(self, variant_index: int) -> VariantRecord | None:
+    def by_index(self, variant_index: int, *, expect_release_id: str) -> VariantRecord | None:
+        require_release(self.release_id, expect_release_id, "a variant index")
         [shared] = self._to_shared(np.array([variant_index])).tolist()
-        return None if shared < 0 else self._record(self._shared.by_index(int(shared)))
+        if shared < 0:
+            return None
+        return self._record(
+            self._shared.by_index(int(shared), expect_release_id=self._shared.release_id)
+        )
 
-    def by_indices(self, indices: Iterable[int]) -> dict[int, VariantRecord]:
+    def by_indices(
+        self, indices: Iterable[int],
+        *,
+        expect_release_id: str,
+    ) -> dict[int, VariantRecord]:
+        require_release(self.release_id, expect_release_id, "a variant index")
         panel = np.array(sorted({int(i) for i in indices}), dtype=np.int64)
         shared = self._to_shared(panel)
-        found = self._shared.by_indices(shared[shared >= 0].tolist())
+        found = self._shared.by_indices(
+            shared[shared >= 0].tolist(), expect_release_id=self._shared.release_id
+        )
         out: dict[int, VariantRecord] = {}
         for row, shared_row in zip(panel.tolist(), shared.tolist(), strict=True):
             record = found.get(int(shared_row)) if shared_row >= 0 else None
@@ -252,7 +292,7 @@ class PanelVariantAxis:
 
     def by_identifier(self, identifier: str) -> VariantRecord | None:
         index = self.index_of(identifier)
-        return None if index is None else self.by_index(index)
+        return None if index is None else self.by_index(index, expect_release_id=self.release_id)
 
     def by_alid(self, parsed: ParsedAlid) -> VariantRecord | None:
         return self._record(self._shared.by_alid(parsed))

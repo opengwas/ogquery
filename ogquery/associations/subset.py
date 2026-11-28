@@ -53,7 +53,9 @@ class SubsetReader:
             raise TypeError(f"an Indexed Variant Subset reads one Analysis, not {cells.kind!r}")
         col = cells.analysis_index
         require_within(cells, self._source, n_analyses=self._subset.n_analyses)
-        decoded = self._subset.decode_analysis(col)
+        decoded = self._subset.decode_analysis(
+            col, expect_release_id=self._subset.release_id
+        )
         eaf = (
             np.full(len(decoded.z), np.nan, dtype=np.float32)
             if decoded.eaf is None

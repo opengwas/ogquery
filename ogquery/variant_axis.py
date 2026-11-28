@@ -49,6 +49,7 @@ from ogquery.format import (
     carries_variant_aliases,
     carries_variant_offsets,
 )
+from ogquery.guard import require_release
 from ogquery.hybrid import DenseComponentSharesAxis, shared_axis_root
 from ogquery.identity import normalise_chromosome
 from ogquery.npy_sidecar import WINDOW_ROWS, release_maps
@@ -224,9 +225,16 @@ class VariantAxis:
     """Read a Store's variants: its search indexes here, its Variant Table through `legacy`."""
 
     def __init__(
-        self, store_path: str | Path, legacy: LegacyVariantTable, *, format_version: str
+        self,
+        store_path: str | Path,
+        legacy: LegacyVariantTable,
+        *,
+        format_version: str,
+        release_id: str,
     ):
         self.store_path = Path(store_path)
+        #: The release this axis reads: its indices are scoped to it (`ogquery.guard`).
+        self.release_id = release_id
         if shared_axis_root(self.store_path, format_version) is not None:
             raise DenseComponentSharesAxis(
                 f"{self.store_path} is a Hybrid's Dense Component at format_version "
@@ -352,7 +360,7 @@ class VariantAxis:
         if parsed is not None:
             return self.by_alid(parsed)
         index = self.index_of(identifier)
-        return None if index is None else self.by_index(index)
+        return None if index is None else self.by_index(index, expect_release_id=self.release_id)
 
     def index_of(self, identifier: str) -> int | None:
         """The one Variant Index `by_identifier` resolves `identifier` to, or None.
@@ -447,7 +455,7 @@ class VariantAxis:
         row = int(self._alid_index.search([_canonical(parsed)])[0])
         if row == UNINDEXED:
             return self._scanned_record(parsed)
-        return None if row == ABSENT else self.by_index(row)
+        return None if row == ABSENT else self.by_index(row, expect_release_id=self.release_id)
 
     def _scanned_record(self, parsed: ParsedAlid) -> VariantRecord | None:
         """The exact scan of the table at the ALID's position, for one the index lacks."""
@@ -470,7 +478,7 @@ class VariantAxis:
         if self.reads_table:
             return self.tabix_range(chromosome, start, end)
         rows = self.range_indices(chromosome, start, end)
-        records = self.by_indices(rows.tolist())
+        records = self.by_indices(rows.tolist(), expect_release_id=self.release_id)
         return [records[int(row)] for row in rows]
 
     def tabix_range(self, chromosome: str, start: int, end: int) -> list[VariantRecord]:
@@ -505,12 +513,13 @@ class VariantAxis:
             indices.append(int(fields[2]))
         return np.array(indices, dtype="int32")
 
-    def by_index(self, variant_index: int) -> VariantRecord | None:
+    def by_index(self, variant_index: int, *, expect_release_id: str) -> VariantRecord | None:
         """Row `variant_index`, every column of it; None outside the axis.
 
         On 0.3.0 from the sidecars (`sidecar_records`), the table unread. The 0.2 series
         seeks the row's BGZF offset in the table.
         """
+        require_release(self.release_id, expect_release_id, "a variant index")
         if variant_index < 0 or variant_index >= self.n_variants:
             return None
         if not self.reads_table:
@@ -530,9 +539,9 @@ class VariantAxis:
         order: identity from the ALID sidecar, rsID from the rsID index, `source_alid`
         from the `source_alid` sidecar. Every row must be in the axis."""
         rows = np.asarray(rows, dtype=np.int64).reshape(-1)
-        identity = self.identity_by_indices(rows)
-        rsids = self.rsids_by_indices(rows)
-        sources = self.source_alids_by_indices(rows)
+        identity = self.identity_by_indices(rows, expect_release_id=self.release_id)
+        rsids = self.rsids_by_indices(rows, expect_release_id=self.release_id)
+        sources = self.source_alids_by_indices(rows, expect_release_id=self.release_id)
         positions = identity["position"].tolist()
         return [
             VariantRecord(
@@ -548,26 +557,32 @@ class VariantAxis:
             for k, row in enumerate(rows.tolist())
         ]
 
-    def rsids_by_indices(self, variant_index: np.ndarray) -> np.ndarray:
+    def rsids_by_indices(self, variant_index: np.ndarray, *, expect_release_id: str) -> np.ndarray:
         """Each row's rsID, as an object array in `variant_index`'s order; None for a row
         that names none (the table's blank, ``.``) or that the axis lacks.
 
         On 0.3.0 the rsID index, inverted (`RsidIndex.rsids`): the table is not read. On
         the 0.2 series the table's rows (`by_indices`), as it always was.
         """
+        require_release(self.release_id, expect_release_id, "a variant index")
         vi = np.asarray(variant_index, dtype=np.int64).reshape(-1)
         if not self.reads_table:
             assert self._rsid_index is not None, "a 0.3.0 axis is refused without one"
             return self._rsid_index.rsids(vi, self.n_variants)
         return self._table_column(vi, "rsid")
 
-    def source_alids_by_indices(self, variant_index: np.ndarray) -> np.ndarray:
+    def source_alids_by_indices(
+        self, variant_index: np.ndarray,
+        *,
+        expect_release_id: str,
+    ) -> np.ndarray:
         """Each row's `source_alid`, as an object array in `variant_index`'s order; None
         for a row that has none (the table's blank, ``.``) or that the axis lacks.
 
         On 0.3.0 the `source_alid` sidecar's (#470), which refuses a row outside it: the
         table is not read. On the 0.2 series the table's rows (`by_indices`).
         """
+        require_release(self.release_id, expect_release_id, "a variant index")
         vi = np.asarray(variant_index, dtype=np.int64).reshape(-1)
         if self.reads_table:
             return self._table_column(vi, "source_alid")
@@ -578,7 +593,7 @@ class VariantAxis:
 
     def _table_column(self, vi: np.ndarray, column: str) -> np.ndarray:
         """One column of the 0.2 table's rows `vi`, None for a row the axis lacks."""
-        records = self.by_indices(vi.tolist())
+        records = self.by_indices(vi.tolist(), expect_release_id=self.release_id)
         out = np.full(vi.size, None, dtype=object)
         for slot, row in enumerate(vi.tolist()):
             record = records.get(int(row))
@@ -596,9 +611,15 @@ class VariantAxis:
         (`tests/test_variant_table_off_read_path.py`, `tests/test_source_alid_sidecar.py`).
         It is `rows_by_indices` of every row.
         """
-        return self.rows_by_indices(np.arange(self.n_variants, dtype=np.int64))
+        return self.rows_by_indices(
+            np.arange(self.n_variants, dtype=np.int64), expect_release_id=self.release_id
+        )
 
-    def rows_by_indices(self, rows: np.ndarray) -> dict[int, dict[str, Any]]:
+    def rows_by_indices(
+        self, rows: np.ndarray,
+        *,
+        expect_release_id: str,
+    ) -> dict[int, dict[str, Any]]:
         """The `variants_table()` rows of `rows` alone, keyed by `variant_index`, ascending:
         the one projection of a row every variant read answers with (`VARIANTS_TABLE_COLUMNS`).
 
@@ -606,6 +627,7 @@ class VariantAxis:
         (`by_indices`, which reads the whole table once for many rows). A row outside the
         axis is refused, never left out.
         """
+        require_release(self.release_id, expect_release_id, "a variant index")
         unique = np.unique(np.asarray(rows, dtype=np.int64))
         if not unique.size:
             return {}
@@ -615,19 +637,24 @@ class VariantAxis:
 
     def _table_rows(self, unique: np.ndarray) -> dict[int, dict[str, Any]]:
         """`rows_by_indices` on the 0.2 series: the table's records, projected."""
-        records = self.by_indices(unique.tolist())
+        records = self.by_indices(unique.tolist(), expect_release_id=self.release_id)
         missing = [row for row in unique.tolist() if row not in records]
         if missing:
             raise ValueError(f"no variant row at index {missing[0]}")
         return {row: _table_row(records[row]) for row in unique.tolist()}
 
-    def by_indices(self, indices: Iterable[int]) -> dict[int, VariantRecord]:
+    def by_indices(
+        self, indices: Iterable[int],
+        *,
+        expect_release_id: str,
+    ) -> dict[int, VariantRecord]:
         """Resolve many Store-local Variant Indices to `VariantRecord`s, every column; a row
         outside the axis is left out.
 
         On 0.3.0 from the sidecars (`sidecar_records`), the table unread. On the 0.2
         series from the table (`_table_records_by_indices`).
         """
+        require_release(self.release_id, expect_release_id, "a variant index")
         wanted = sorted(set(int(item) for item in indices))
         if not self.reads_table:
             held = np.asarray(wanted, dtype=np.int64)
@@ -661,11 +688,15 @@ class VariantAxis:
             }
         records: dict[int, VariantRecord] = {}
         for index in wanted:
-            if (record := self.by_index(index)) is not None:
+            if (record := self.by_index(index, expect_release_id=self.release_id)) is not None:
                 records[index] = record
         return records
 
-    def identity_by_indices(self, variant_index: np.ndarray) -> dict[str, np.ndarray]:
+    def identity_by_indices(
+        self, variant_index: np.ndarray,
+        *,
+        expect_release_id: str,
+    ) -> dict[str, np.ndarray]:
         """chromosome/position/effect_allele/other_allele/alid for `variant_index`,
         resolved without a table scan.
 
@@ -678,10 +709,11 @@ class VariantAxis:
         returns. `rsid` is the one identity field this can't produce: it isn't
         part of the ALID, so it's the only reason a caller still needs `by_indices()`.
         """
+        require_release(self.release_id, expect_release_id, "a variant index")
         vi = np.asarray(variant_index, dtype="int64")
         alids = self._alid_index.alids(vi)
         for slot in [k for k, alid in enumerate(alids) if alid is None]:
-            record = self.by_index(int(vi[slot]))
+            record = self.by_index(int(vi[slot]), expect_release_id=self.release_id)
             if record is None:
                 raise ValueError(f"no variant row at index {int(vi[slot])}")
             alids[slot] = record.alid

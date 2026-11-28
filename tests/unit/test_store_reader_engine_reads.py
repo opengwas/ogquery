@@ -86,7 +86,7 @@ def _axis(
     np.save(tmp_path / "variant_rsid_bytes.npy", np.empty(0, dtype=RSID_DTYPE))
     np.save(tmp_path / "variant_rsid_rows.npy", np.empty(0, dtype="int32"))
     table = _Table(rows)
-    return VariantAxis(tmp_path, table, format_version=version), table
+    return VariantAxis(tmp_path, table, format_version=version, release_id="r1"), table
 
 
 def _row(index: int, source_alid: str | None) -> str:

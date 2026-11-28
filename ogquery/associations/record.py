@@ -343,6 +343,10 @@ class Associations(Mapping[str, np.ndarray]):
     eaf: np.ndarray
     status: np.ndarray
     n: np.ndarray | None = None
+    #: The `release_id` of the release these rows were read from, which their indices are
+    #: scoped to (`ogquery.guard`). Not a key of the mapping view: no digest sees it. The
+    #: query facade stamps every answer; None on a record built by hand.
+    release_id: str | None = None
 
     def __post_init__(self) -> None:
         fields = {
@@ -468,6 +472,7 @@ class Associations(Mapping[str, np.ndarray]):
             self.eaf[index],
             self.status[index],
             None if self.n is None else self.n[index],
+            self.release_id,
         )
 
     def where(self, keep: np.ndarray) -> Associations:
@@ -490,7 +495,8 @@ class Associations(Mapping[str, np.ndarray]):
             return self
         vi = np.asarray(to_shared)[self.variant_index.astype(np.int64)]
         return Associations(
-            vi, self.analysis_index, self.z, self.se, self.eaf, self.status, self.n
+            vi, self.analysis_index, self.z, self.se, self.eaf, self.status, self.n,
+            self.release_id,
         )
 
     def in_genomic_order(self) -> Associations:
@@ -500,11 +506,18 @@ class Associations(Mapping[str, np.ndarray]):
     @staticmethod
     def concat(parts: Sequence[Associations], *, with_n: bool = False) -> Associations:
         """The parts' rows in order. `with_n` says whether the result carries `n`;
-        a part without it cannot join a result that does."""
+        a part without it cannot join a result that does. Parts read from different
+        releases cannot be joined; the result carries the release the stamped ones share."""
         if with_n and any(p.n is None for p in parts):
             raise ValueError("a record without n cannot join a result carrying n")
         if not parts:
             return Associations.empty(with_n=with_n)
+        releases = {p.release_id for p in parts if p.release_id is not None}
+        if len(releases) > 1:
+            raise ValueError(
+                "records read from different releases cannot be joined: "
+                f"{sorted(map(str, releases))}"
+            )
         return Associations(
             variant_index=_cat(parts, "variant_index"),
             analysis_index=_cat(parts, "analysis_index"),
@@ -513,6 +526,7 @@ class Associations(Mapping[str, np.ndarray]):
             eaf=_cat(parts, "eaf"),
             status=_cat(parts, "status"),
             n=_cat(parts, "n") if with_n else None,
+            release_id=next(iter(releases), None),
         )
 
 
