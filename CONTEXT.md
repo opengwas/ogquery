@@ -63,6 +63,17 @@ Install, and no Windows wheel of pgenlib exists; without it opening a Genotype S
 `ogquery.opening.GenotypeExtraMissing`, naming it. `ogquery/ld/genotypes/` is the one package that
 imports either (ADR 0002, amended). A Genotype Store is read from a local path only.
 
+**Byte Genome**:
+A release assembly's primary contigs (GRCh38's 25) as one memory-mapped file of uint8, one
+upper-cased ASCII byte per base in the variant order, beside a JSON sidecar holding each
+contig's offset, length and SHA-256, the sequence digest (opengwasdb ADR 0108 §9), the file's
+SHA-256 and its provenance (ADR 0003). `ogquery.genome` writes it from contig sequences an
+engine hands it (`write_byte_genome`) and reads it with numpy alone (`ByteGenome`). It is the
+reference CPRA formation reads, so builds, ogquery and the Data API spell a CPRA from one
+byte-identical sequence. Its `digest()` is computed from the bytes; the sidecar's is only what
+`verify()` compares against.
+_Avoid_: reference FASTA (the FASTA is its recorded source, read by the engine), 2-bit genome.
+
 **Clean Install**:
 A fresh virtual environment into which `pip install ogquery` was run with source builds
 refused: it must hold ogquery, numpy, zarr, numcodecs and their own dependencies, and

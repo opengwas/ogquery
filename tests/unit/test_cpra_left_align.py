@@ -4,12 +4,16 @@ Ported from opengwasdb `0ba413e7`'s `tests/test_left_align.py` with the code it 
 (opengwas/ogquery#14), its expectations unchanged. Every expectation below is written by
 hand from the fixture sequence, and was checked once against `bcftools norm -f -c e`
 (1.24) on the same FASTA there. opengwasdb read the fixture through its `FastaSequence`
-(pysam), which ogquery may not import; here the same sequence is read through
-`_Sequence`, a `ReferenceSequence` held in memory with `FastaSequence`'s answers. The
-tests of `FastaSequence` itself (its index, its digest's wording) stay in opengwasdb.
+(pysam), which ogquery may not import; here the same sequence is read two ways: through
+`_Sequence`, a `ReferenceSequence` held in memory with `FastaSequence`'s answers, and
+through the byte genome written from it (`ogquery.genome`). The tests of `FastaSequence`
+itself (its index, its digest's wording) stay in opengwasdb.
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -22,6 +26,7 @@ from ogquery.cpra import (
     normalise_indel,
     trim_alleles,
 )
+from ogquery.genome import ByteGenome, write_byte_genome
 from ogquery.identity import VariantNormalisationError, normalise_chromosome
 
 #: Contig 1, by 1-based position:
@@ -54,10 +59,24 @@ class _Sequence:
         raise NotImplementedError
 
 
-@pytest.fixture
-def sequence() -> ReferenceSequence:
-    # Soft-masked (lower case), as hg38 is: it may not change a result.
-    held = _Sequence({"1": CONTIG_1.lower(), "2": CONTIG_2})
+@pytest.fixture(params=["memory", "byte_genome"])
+def sequence(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[ReferenceSequence]:
+    # Soft-masked (lower case) and wrapped, as hg38 is: neither may change a result.
+    if request.param == "memory":
+        yield _check(_Sequence({"1": CONTIG_1.lower(), "2": CONTIG_2}))
+        return
+    wrapped = [CONTIG_1[i : i + 10].lower() for i in range(0, len(CONTIG_1), 10)]
+    path = write_byte_genome(
+        tmp_path / "t.bytes",
+        [("1", wrapped), ("2", [CONTIG_2])],
+        assembly="test",
+        provenance={"source": "test_cpra_left_align"},
+    )
+    with ByteGenome.open(path) as genome:
+        yield _check(genome)
+
+
+def _check(held: ReferenceSequence) -> ReferenceSequence:
     assert held.fetch("1", 0, len(CONTIG_1)) == CONTIG_1
     assert held.fetch("2", 0, len(CONTIG_2)) == CONTIG_2
     return held
