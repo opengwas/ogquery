@@ -27,7 +27,8 @@ from ogquery.encoding.codec import (
     positions_flat,
 )
 from ogquery.encoding.plan import EafBaselineError, StoreEncoding
-from ogquery.manifest import StoreManifest
+from ogquery.guard import IndexSpace, ReleaseIdentity, require_space
+from ogquery.manifest import StoreManifest, data_scope
 from ogquery.stored import optional_array
 
 #: The index group, under the Ragged component's own group (ADR 0060).
@@ -63,7 +64,37 @@ class ByVariantReader:
         encoding: StoreEncoding | None = None,
         *,
         n_axis: int | None = None,
+        identity: ReleaseIdentity | None = None,
     ):
+        # The variant axis this index is over: its release's, learned from its manifest, which
+        # must describe the `data.zarr` read (`manifest.data_scope`).
+        spaces, manifest = data_scope(store_path, explicit=identity)
+        if encoding is None:
+            encoding = (manifest or StoreManifest.load(Path(store_path))).encoding
+        self._open(store_path, encoding, n_axis, spaces.variant)
+
+    @classmethod
+    def _discovered(
+        cls,
+        store_path: str | Path,
+        encoding: StoreEncoding,
+        n_axis: int | None,
+        index_space: IndexSpace,
+    ) -> ByVariantReader:
+        """Opened by a reader that has already learned its space from this release's
+        manifest (`CsrReader`), so the manifest is read once."""
+        reader = cls.__new__(cls)
+        reader._open(store_path, encoding, n_axis, index_space)
+        return reader
+
+    def _open(
+        self,
+        store_path: str | Path,
+        encoding: StoreEncoding,
+        n_axis: int | None,
+        index_space: IndexSpace,
+    ) -> None:
+        self.index_space = index_space
         self._ragged = store_arrays.open_group(Path(store_path) / RAGGED_ZARR_PATH)
         if BY_VARIANT_GROUP not in self._ragged:
             raise ValueError(
@@ -71,8 +102,6 @@ class ByVariantReader:
                 "index must be built before it is read (ADR 0060)"
             )
         self._index = self._ragged[BY_VARIANT_GROUP]
-        if encoding is None:
-            encoding = StoreManifest.load(Path(store_path)).encoding
         self._encoding = encoding
         self._require_arrays()
         self._require_members()
@@ -187,13 +216,14 @@ class ByVariantReader:
     def n_rows(self) -> int:
         return array_length(self._analysis_index)
 
-    def rows_for_variant(self, variant_index: int) -> tuple[int, int]:
+    def rows_for_variant(self, variant_index: int, *, expect_space: IndexSpace) -> tuple[int, int]:
         """The half-open row range one variant's associations occupy.
 
         A variant the index does not cover (a Hybrid's on-panel variants) has an
         empty range, so the caller returns no rows rather than falling back to a
         scan -- the index *is* the answer for every variant it indexes.
         """
+        require_space(self.index_space, expect_space, "a variant index")
         variant = int(variant_index)
         if variant < 0 or variant >= self.n_axis:
             raise ValueError(
@@ -202,27 +232,39 @@ class ByVariantReader:
         pair = self._offsets[variant : variant + 2]
         return int(pair[0]), int(pair[1])
 
-    def rows_for_variant_range(self, low: int, high: int) -> tuple[int, int]:
+    def rows_for_variant_range(
+        self, low: int, high: int, *, expect_space: IndexSpace
+    ) -> tuple[int, int]:
         """The half-open row range a contiguous variant range covers.
 
         `low` is the first and `high` the last variant in the range (inclusive);
         every row between their offsets belongs to a variant in `[low, high]`,
-        because the index is variant-ordered.
+        because the index is variant-ordered. Both are variant indices, read only in the
+        space they came from (`expect_space`).
         """
-        first, _ = self.rows_for_variant(low)
-        _, last = self.rows_for_variant(high)
+        first, _ = self.rows_for_variant(low, expect_space=expect_space)
+        _, last = self.rows_for_variant(high, expect_space=expect_space)
         return first, last
 
     def decode(
-        self, first_variant: int, last_variant: int, start: int, end: int
+        self,
+        first_variant: int,
+        last_variant: int,
+        start: int,
+        end: int,
+        *,
+        expect_space: IndexSpace,
     ) -> dict[str, np.ndarray]:
         """Decode the index's rows `[start, end)`, whose variants span `[first, last]`.
 
         Returns the six result arrays' raw parts: `variant_index`,
         `analysis_index`, decoded `z`/`se`/`eaf` and the `imputed` mask (all
         zeros on an observed-only component) -- and decoded `n` when the
-        component carries per-association sample sizes (ADR 0067).
+        component carries per-association sample sizes (ADR 0067). `first_variant` and
+        `last_variant` number the rows' variants, so they are read only in the space they
+        came from (`expect_space`).
         """
+        require_space(self.index_space, expect_space, "a variant range")
         start, end = int(start), int(end)
         empty = {
             "variant_index": np.empty(0, dtype="int32"),

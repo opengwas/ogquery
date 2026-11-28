@@ -22,13 +22,14 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import ClassVar, Protocol
+from typing import ClassVar, Protocol, Self
 
 import numpy as np
 
 from ogquery.alid import ALID_DTYPE, is_indexable_alid
 from ogquery.alid_sidecar import ABSENT, AlidSidecar
 from ogquery.format import carries_alid_sidecar
+from ogquery.guard import IndexSpace, SpaceBound
 from ogquery.npy_sidecar import invert_rows, open_pair_or_none
 
 __all__ = [
@@ -62,8 +63,18 @@ class AlidIndex(Protocol):
         """Each ALID's row, `ABSENT`, or `UNINDEXED`, in `alids`' order."""
         ...
 
-    def alids(self, rows: np.ndarray) -> np.ndarray:
-        """Each row's ALID as an object array; None for a row the index leaves out."""
+    @property
+    def index_space(self) -> IndexSpace | None:
+        """The space it is bound to (`guard.SpaceBound`); None opened from its files."""
+        ...
+
+    def alids(self, rows: np.ndarray, *, expect_space: IndexSpace | None = None) -> np.ndarray:
+        """Each row's ALID as an object array; None for a row the index leaves out.
+        `expect_space` is the rows', required once bound (`guard.SpaceBound`)."""
+        ...
+
+    def bind(self, space: IndexSpace) -> Self:
+        """Bind it to an axis's `space`, and return it (`guard.SpaceBound`)."""
         ...
 
     def unindexed_rows(self, n_rows: int) -> np.ndarray:
@@ -92,7 +103,7 @@ class AlidIndexKind(Protocol):
 _KEY_WINDOW = 1_000_000
 
 
-class FixedWidthAlidIndex:
+class FixedWidthAlidIndex(SpaceBound):
     """The 0.2 series' ALID index: `|S32` keys sorted, and each key's row (#127, #029)."""
 
     FILENAMES: ClassVar[tuple[str, ...]] = ("variant_alid_bytes.npy", "variant_alid_rows.npy")
@@ -122,7 +133,8 @@ class FixedWidthAlidIndex:
         found[at[hit]] = np.asarray(self.rows, dtype=np.int64)[slot[hit]]
         return found
 
-    def alids(self, rows: np.ndarray) -> np.ndarray:
+    def alids(self, rows: np.ndarray, *, expect_space: IndexSpace | None = None) -> np.ndarray:
+        self._require_bound(expect_space, "a variant row")
         rows = np.asarray(rows, dtype=np.int64)
         out = np.full(rows.size, None, dtype=object)
         if not rows.size:

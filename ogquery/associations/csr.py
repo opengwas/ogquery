@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import replace
 from operator import itemgetter
 from pathlib import Path
 
@@ -25,15 +26,11 @@ from ogquery.associations.record import (
 from ogquery.by_variant import ByVariantReader, VariantIndexError, has_variant_index
 from ogquery.csr import RAGGED_ZARR_PATH, RaggedCSRReader
 from ogquery.encoding.plan import StoreEncoding
-from ogquery.manifest import StoreManifest
+from ogquery.guard import CellSpaces, ReleaseIdentity, require_cells
+from ogquery.manifest import data_scope
 
 #: A by-variant index decode's columns, in `Inspection.of`'s order.
 _block_columns = itemgetter("variant_index", "analysis_index", "z", "se", "eaf", "imputed")
-
-
-def _manifest(path: Path) -> StoreManifest | None:
-    """The release manifest beside a sequence, or None for a bare sequence."""
-    return StoreManifest.load(path) if (path / "manifest.json").exists() else None
 
 
 def _run(positions: np.ndarray) -> tuple[int, int] | None:
@@ -80,9 +77,13 @@ class CsrReader:
         *,
         source: str,
         requires_mask: bool | None = None,
+        identity: ReleaseIdentity | None = None,
     ) -> None:
         self._path = Path(store_path)
-        manifest = _manifest(self._path)
+        # Which release this reads is settled first, before the mask or a plane is asked
+        # about: a `data.zarr` its manifest does not describe is refused as that. Its
+        # manifest is read once, here, and its spaces handed to the structure beneath.
+        self._spaces, manifest = data_scope(self._path, explicit=identity)
         if encoding is None:
             if manifest is None:
                 raise ValueError(f"{source}: no manifest to read the encoding from")
@@ -99,7 +100,7 @@ class CsrReader:
         record.require_mask(
             record.mask_required(requires_mask, state, source), "imputed" in group, source
         )
-        self.structure = RaggedCSRReader(store_path, encoding)
+        self.structure = RaggedCSRReader._discovered(store_path, encoding, self._spaces)
         self._by_variant: ByVariantReader | None = None
         #: The variant axis `open_variant_index` was given; a CSR records none itself.
         self._n_variants: int | None = None
@@ -113,18 +114,26 @@ class CsrReader:
         *,
         source: str | None = None,
         requires_mask: bool | None = None,
+        identity: ReleaseIdentity | None = None,
     ) -> CsrReader:
         """A Reference-Completed component's imputed mask says which rows are
         imputed, so one without it is refused rather than read as all-observed
         (spec §15). Whether the component is completed is its release's manifest
         -- or, with none, its sequence's `completion_state` record -- unless the
-        caller says (`requires_mask`); a component that records neither is refused."""
+        caller says (`requires_mask`); a component that records neither is refused.
+        `identity` is the release's where no manifest is reachable (`RaggedCSRReader`)."""
         return cls(
             store_path,
             encoding,
             source=source or f"Ragged component {store_path}",
             requires_mask=requires_mask,
+            identity=identity,
         )
+
+    @property
+    def spaces(self) -> CellSpaces:
+        """What this reader's cells are numbered in: its release's variant axis and Analyses."""
+        return self.structure.spaces
 
     @property
     def carries_n(self) -> bool:
@@ -149,16 +158,24 @@ class CsrReader:
                 f"Store at {self._path} carries no variant index (ragged/by_variant); "
                 f"build it with 'ogdb build-variant-index {self._path}'"
             )
-        self._by_variant = ByVariantReader(self._path, self._encoding, n_axis=n_variants)
+        self._by_variant = ByVariantReader._discovered(
+            self._path, self._encoding, n_variants, self._spaces.variant
+        )
         self._n_variants = int(n_variants)
 
     # ── the interface ───────────────────────────────────────────────────────
 
     def windows(
-        self, cells: Cells | None = None, *, max_cells: int | None = None
+        self,
+        cells: Cells | None = None,
+        *,
+        max_cells: int | None = None,
+        expect_spaces: CellSpaces | None = None,
     ) -> Iterator[Cells]:
         """An `analysis` or `analyses` region -- or, with none, the whole component --
-        as consecutive `positions` regions of at most `max_cells` rows each.
+        as consecutive `positions` regions of at most `max_cells` rows each. A region
+        names Analyses, whose offsets it is cut at, so it is read only in the spaces it
+        came from (`expect_spaces`, required with a region); the whole component names none.
 
         For a scan that must not hold a whole Analysis, or a whole sequence, at
         once: each row of the region comes once, in the region's order, so the
@@ -167,6 +184,8 @@ class CsrReader:
         the sequence's inner chunks (#252). The region is checked when this is
         called, before any window is cut (`window_region`).
         """
+        if cells is not None:
+            require_cells(self.spaces, expect_spaces, "the region")
         region, step = window_region(
             cells,
             max_cells,
@@ -181,13 +200,14 @@ class CsrReader:
             for lo in range(start, stop, step):
                 yield Cells.positions(np.arange(lo, min(lo + step, stop), dtype=np.int64))
 
-    def z(self, cells: Cells) -> np.ndarray:
+    def z(self, cells: Cells, *, expect_spaces: CellSpaces) -> np.ndarray:
         """Decoded Z of a `positions` region -- a window -- for a scan that thresholds
         Z alone, in the region's order.
 
         A non-canonical marker is refused here, as every read refuses one (spec §15):
         a NaN clears no cutoff, so a scan that compared it would drop the row.
         """
+        require_cells(self.spaces, expect_spaces, "the cells")
         if cells.kind != "positions" or cells.pos is None:
             raise TypeError(f"Z alone is read for positions, not a {cells.kind!r} region")
         run = self._rows_of(cells)
@@ -207,26 +227,33 @@ class CsrReader:
             )
         return z
 
-    def read(self, cells: Cells, *, observed_only: bool = False) -> Associations:
+    def read(
+        self, cells: Cells, *, observed_only: bool = False, expect_spaces: CellSpaces
+    ) -> Associations:
         """The region's rows; raises `InvalidAssociations` on a §15-invalid one."""
-        return self.inspect(cells).associations(self._source).observed_only(observed_only)
+        require_cells(self.spaces, expect_spaces, "the cells")
+        found = self.inspect(cells, expect_spaces=expect_spaces).associations(self._source)
+        return replace(
+            found.observed_only(observed_only),
+            variant_space=self.spaces.variant,
+            analysis_space=self.spaces.analysis,
+        )
 
-    def inspect(self, cells: Cells) -> Inspection:
+    def inspect(self, cells: Cells, *, expect_spaces: CellSpaces) -> Inspection:
         """Every row of the region, decoded and classified; never raises on one.
 
         A region naming an index outside its axis is refused (`require_within`).
         A CSR records no variant axis of its own, so a region naming variants is
         read only once `open_variant_index` has given it one.
         """
+        require_cells(self.spaces, expect_spaces, "the cells")
         if cells.vi is not None and self._n_variants is None:
             raise VariantIndexError(
                 f"{self._source}: a region naming variants is checked against the "
                 "variant axis the by-variant index is opened on; open the variant "
                 "index first"
             )
-        require_within(
-            cells, self._source, n_analyses=self.n_analyses, n_variants=self._n_variants
-        )
+        require_within(cells, self._source, n_analyses=self.n_analyses, n_variants=self._n_variants)
         decode = {
             "analysis": self._analyses,
             "analyses": self._analyses,
@@ -280,7 +307,7 @@ class CsrReader:
 
     def _analysis(self, analysis_index: int) -> Inspection:
         csr = self.structure
-        start, end = csr.span(analysis_index)
+        start, end = csr.span(analysis_index, expect_space=csr.spaces.analysis)
         if start == end:
             return self._empty()
         variants = csr.variant_index(start, end)
@@ -290,7 +317,13 @@ class CsrReader:
             variants,
             analysis_index,
             z,
-            csr.se_slice(start, end, analysis_index=analysis_index, eaf=eaf.values),
+            csr.se_slice(
+                start,
+                end,
+                analysis_index=analysis_index,
+                eaf=eaf.values,
+                expect_space=csr.spaces.analysis,
+            ),
             eaf.values,
             eaf.imputed,
             csr.n_slice(start, end) if self.carries_n else None,
@@ -306,13 +339,17 @@ class CsrReader:
         low, high = int(wanted.min()), int(wanted.max())
         # One variant reads its two offsets in one call; a range reads its ends.
         first, last = (
-            self._by_variant.rows_for_variant(low)
+            self._by_variant.rows_for_variant(low, expect_space=self._by_variant.index_space)
             if low == high
-            else self._by_variant.rows_for_variant_range(low, high)
+            else self._by_variant.rows_for_variant_range(
+                low, high, expect_space=self._by_variant.index_space
+            )
         )
         if first == last:
             return self._empty()
-        block = self._by_variant.decode(low, high, first, last)
+        block = self._by_variant.decode(
+            low, high, first, last, expect_space=self._by_variant.index_space
+        )
         vi, ai, z, se, eaf, flags = _block_columns(block)
         found = Inspection.of(vi, ai, z, se, eaf, flags, block.get("n"))
         if len(np.unique(wanted)) == high - low + 1:
@@ -347,12 +384,17 @@ class CsrReader:
     def _cross_positions(self, variants: np.ndarray, analyses: np.ndarray) -> np.ndarray:
         wanted = np.unique(variants).astype(np.int32)
         found = [
-            self.structure.segment_positions(wanted, analysis_index=int(a)) for a in analyses
+            self.structure.segment_positions(
+                wanted, analysis_index=int(a), expect_spaces=self.spaces
+            )
+            for a in analyses
         ]
         return np.concatenate(found) if found else np.empty(0, dtype=np.int64)
 
     def _pair_positions(self, variants: np.ndarray, analyses: np.ndarray) -> np.ndarray:
-        slots, positions = self.structure.pair_positions(variants, analyses)
+        slots, positions = self.structure.pair_positions(
+            variants, analyses, expect_spaces=self.spaces
+        )
         if len(slots) != len(variants):
             raise LookupError(
                 f"{self._source}: {len(variants) - len(slots):,} requested (variant, Analysis) "
@@ -381,4 +423,3 @@ class CsrReader:
             csr.n_at(unique) if self.carries_n else None,
         )
         return found if np.array_equal(unique, positions) else found.take(back)
-

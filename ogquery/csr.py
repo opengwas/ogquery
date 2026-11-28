@@ -22,7 +22,14 @@ from ogquery.encoding.codec import (
 )
 from ogquery.encoding.plan import StoreEncoding
 from ogquery.encoding.planes import EafRead, RaggedEafPlane, RaggedSePlane
-from ogquery.manifest import StoreManifest
+from ogquery.guard import (
+    CellSpaces,
+    IndexSpace,
+    ReleaseIdentity,
+    require_cells,
+    require_space,
+)
+from ogquery.manifest import StoreManifest, data_scope
 
 RAGGED_ZARR_PATH = "data.zarr/ragged"
 
@@ -45,18 +52,42 @@ class RaggedCSRReader:
     and one other caller, the Ragged Top-Hit harvest (`layouts/ragged/top_hits.py`).
     """
 
-    def __init__(self, store_path: str | Path, encoding: StoreEncoding | None = None):
+    def __init__(
+        self,
+        store_path: str | Path,
+        encoding: StoreEncoding | None = None,
+        *,
+        identity: ReleaseIdentity | None = None,
+    ):
+        # The numbering of this sequence's cells: its release's variant axis and Analyses,
+        # learned from the release's manifest, which must describe the `data.zarr` read
+        # (`manifest.data_scope`; `identity=` only where no manifest is reachable).
+        spaces, manifest = data_scope(store_path, explicit=identity)
+        if encoding is None:
+            # The plan is read from the release's manifest, never inferred from the
+            # array's dtype: a store that disagrees with its own manifest must fail
+            # validation, not decode as whatever the bytes happen to look like.
+            encoding = (manifest or StoreManifest.load(Path(store_path))).encoding
+        self._open(store_path, encoding, spaces)
+
+    @classmethod
+    def _discovered(
+        cls, store_path: str | Path, encoding: StoreEncoding, spaces: CellSpaces
+    ) -> RaggedCSRReader:
+        """Opened by a reader that has already learned `spaces` from this release's
+        manifest (`CsrReader`, by `manifest.data_scope`), so the manifest is read once."""
+        reader = cls.__new__(cls)
+        reader._open(store_path, encoding, spaces)
+        return reader
+
+    def _open(self, store_path: str | Path, encoding: StoreEncoding, spaces: CellSpaces) -> None:
+        self.spaces = spaces
         path = Path(store_path) / RAGGED_ZARR_PATH
         self._root = store_arrays.open_group(path)
         self._offsets: zarr.Array = self._root["offsets"]
         self._offsets_cache: np.ndarray | None = None
         self._variant_index: zarr.Array = self._root["variant_index"]
         self._z: zarr.Array = self._root["z"]
-        # The plan is read from the release's manifest, never inferred from the
-        # array's dtype: a store that disagrees with its own manifest must fail
-        # validation, not decode as whatever the bytes happen to look like.
-        if encoding is None:
-            encoding = StoreManifest.load(Path(store_path)).encoding
         self._codec = StoreDecoder(encoding, z_overflow=ZOverflowTable.open(self._root))
         # Every EAF read goes through the plane, which gathers the per-variant
         # baseline (and, on a Reference-Completed release, the panel frequency
@@ -106,8 +137,9 @@ class RaggedCSRReader:
         """How many rows the flat association arrays hold."""
         return array_length(self._variant_index)
 
-    def span(self, analysis_index: int) -> tuple[int, int]:
+    def span(self, analysis_index: int, *, expect_space: IndexSpace) -> tuple[int, int]:
         """The `[start, end)` slice of the flat arrays one Analysis occupies."""
+        require_space(self.spaces.analysis, expect_space, "an analysis index")
         offsets = self._offsets[analysis_index : analysis_index + 2]
         return int(offsets[0]), int(offsets[1])
 
@@ -167,9 +199,13 @@ class RaggedCSRReader:
         *,
         eaf: np.ndarray | None = None,
         analysis_index: int | None = None,
+        expect_space: IndexSpace | None = None,
     ) -> np.ndarray:
         """Decoded `se[start:end]`; callers may supply a pre-read frequency
-        block and a known Analysis (#253)."""
+        block and a known Analysis (#253). The Analysis selects its SE coefficients, so
+        it is read only in the space it came from (`expect_space`, required with one)."""
+        if analysis_index is not None:
+            require_space(self.spaces.analysis, expect_space, "an analysis index")
         return self._se_plane.slice(start, end, analysis_index=analysis_index, eaf=eaf)
 
     def se_at(self, positions: np.ndarray, *, eaf: np.ndarray | None = None) -> np.ndarray:
@@ -265,7 +301,9 @@ class RaggedCSRReader:
                 break
         return end
 
-    def segment_positions(self, wanted: np.ndarray, *, analysis_index: int) -> np.ndarray:
+    def segment_positions(
+        self, wanted: np.ndarray, *, analysis_index: int, expect_spaces: CellSpaces
+    ) -> np.ndarray:
         """Flat CSR positions in one Analysis whose variant is in `wanted`.
 
         A genuine bounded binary search over the Analysis's sorted segment
@@ -286,10 +324,11 @@ class RaggedCSRReader:
         builder produces. The returned positions are ascending and in segment
         order, matching `analysis()` row for row.
         """
+        require_cells(self.spaces, expect_spaces, "cached indices")
         wanted = np.unique(np.asarray(wanted, dtype=np.int32))
         if len(wanted) == 0:
             return np.empty(0, dtype=np.int64)
-        lo, hi = self.span(analysis_index)
+        lo, hi = self.span(analysis_index, expect_space=self.spaces.analysis)
         if lo >= hi:
             return np.empty(0, dtype=np.int64)
         size = self.association_chunk
@@ -344,7 +383,9 @@ class RaggedCSRReader:
         """
         return self._eaf_plane.read_at(positions, want_imputed=want_imputed)
 
-    def eaf_pairs(self, variant_index: np.ndarray, analysis_index: np.ndarray) -> np.ndarray:
+    def eaf_pairs(
+        self, variant_index: np.ndarray, analysis_index: np.ndarray, *, expect_spaces: CellSpaces
+    ) -> np.ndarray:
         """EAF for elementwise (variant, analysis) pairs (ADR 0036).
 
         All-NaN when this component stores no `eaf` array -- built before ADR
@@ -352,6 +393,7 @@ class RaggedCSRReader:
         absent from that Analysis stays NaN rather than silently taking a
         neighbour's frequency (`pair_positions`).
         """
+        require_cells(self.spaces, expect_spaces, "cached indices")
         out = np.full(len(variant_index), np.nan, dtype=np.float32)
         # The plane's own answer, not `has_eaf`: a release carrying only the
         # panel's frequencies has no `eaf` array and still has frequencies to
@@ -361,7 +403,9 @@ class RaggedCSRReader:
         # Resolve every pair to a flat CSR position first, then decode once:
         # the plane needs the position to resolve an exception cell, and a
         # per-Analysis decode would gather the baseline slice by slice.
-        slots, positions = self.pair_positions(variant_index, analysis_index)
+        slots, positions = self.pair_positions(
+            variant_index, analysis_index, expect_spaces=self.spaces
+        )
         if len(slots):
             out[slots] = self.eaf_at(positions)
         return out
@@ -390,22 +434,31 @@ class RaggedCSRReader:
             return np.empty(0, dtype=np.float64)
         return self._codec.decode_n(np.asarray(plane.oindex[positions]))
 
-    def n_pairs(self, variant_index: np.ndarray, analysis_index: np.ndarray) -> np.ndarray:
+    def n_pairs(
+        self, variant_index: np.ndarray, analysis_index: np.ndarray, *, expect_spaces: CellSpaces
+    ) -> np.ndarray:
         """`n` for elementwise (variant, analysis) pairs, gathered as `eaf_pairs` is.
 
         The top-hit tiers carry no `n` (ADR 0067), so an indexed top-hit query
         resolves each hit back to its CSR cell. A pair the component does not
         hold is NaN.
         """
+        require_cells(self.spaces, expect_spaces, "cached indices")
         self._require_n()
         out = np.full(len(variant_index), np.nan, dtype=np.float64)
-        slots, positions = self.pair_positions(variant_index, analysis_index)
+        slots, positions = self.pair_positions(
+            variant_index, analysis_index, expect_spaces=self.spaces
+        )
         if len(slots):
             out[slots] = self.n_at(positions)
         return out
 
     def pair_positions(
-        self, variant_index: np.ndarray, analysis_index: np.ndarray
+        self,
+        variant_index: np.ndarray,
+        analysis_index: np.ndarray,
+        *,
+        expect_spaces: CellSpaces,
     ) -> tuple[np.ndarray, np.ndarray]:
         """`(slots, flat positions)` for the pairs this component holds.
 
@@ -414,6 +467,7 @@ class RaggedCSRReader:
         pairs. `slots` index the request; a pair whose variant is absent from its
         Analysis has no slot, so a caller leaves it missing.
         """
+        require_cells(self.spaces, expect_spaces, "cached indices")
         variant_index = np.asarray(variant_index)
         analysis_index = np.asarray(analysis_index)
         offsets = self._offsets[:]

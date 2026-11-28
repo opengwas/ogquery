@@ -43,6 +43,7 @@ from typing import ClassVar
 
 import numpy as np
 
+from ogquery.guard import IndexSpace, SpaceBound
 from ogquery.npy_sidecar import (
     OFFSET_DTYPE,
     WINDOW_ROWS,
@@ -168,7 +169,7 @@ def write_source_alid_sidecar(
         np.save(store / name, array)
 
 
-class SourceAlidSidecar:
+class SourceAlidSidecar(SpaceBound):
     """A release's `source_alid` sidecar, memory-mapped: each row's state, and each
     lifted row's `source_alid`."""
 
@@ -225,10 +226,18 @@ class SourceAlidSidecar:
             self._others = np.flatnonzero(np.asarray(self.state) == OTHER)
         return self._others
 
-    def values(self, rows: np.ndarray | Sequence[int], own_alids: OwnAlids) -> np.ndarray:
+    def values(
+        self,
+        rows: np.ndarray | Sequence[int],
+        own_alids: OwnAlids,
+        *,
+        expect_space: IndexSpace | None = None,
+    ) -> np.ndarray:
         """Each row's `source_alid`, as an object array in `rows`' order; None for a
         row that has none. `own_alids` gives an `OWN_ALID` row's ALID. A row outside
-        the sidecar is refused, never read as none."""
+        the sidecar is refused, never read as none. `expect_space` is the rows', required
+        once bound (`SpaceBound`)."""
+        self._require_bound(expect_space, "a variant row")
         rows = np.asarray(rows, dtype=np.int64).reshape(-1)
         if rows.size and (int(rows.min()) < 0 or int(rows.max()) >= self.n_rows):
             outside = int(rows[(rows < 0) | (rows >= self.n_rows)][0])
@@ -248,12 +257,19 @@ class SourceAlidSidecar:
         """The `source_alid` of each of the `OTHER` rows at `ranks` among them."""
         return slice_texts(self._text, self.offsets, ranks)
 
-    def sourced(self, start: int, stop: int) -> int:
-        """How many rows in ``[start, stop)`` have a `source_alid`."""
+    def sourced(self, start: int, stop: int, *, expect_space: IndexSpace | None = None) -> int:
+        """How many rows in ``[start, stop)`` have a `source_alid`. `expect_space` is the
+        rows', required once bound (`SpaceBound`)."""
+        self._require_bound(expect_space, "a variant row range")
         return int(np.count_nonzero(np.asarray(self.state[start : min(stop, self.n_rows)])))
 
     def differing(
-        self, start: int, values: Sequence[str | None], alids: Sequence[str]
+        self,
+        start: int,
+        values: Sequence[str | None],
+        alids: Sequence[str],
+        *,
+        expect_space: IndexSpace | None = None,
     ) -> list[int]:
         """The rows from `start`, one per given value (None is none) and ALID, whose
         stored state, or whose stored text for a lifted row, is another, ascending.
@@ -261,7 +277,9 @@ class SourceAlidSidecar:
         The one comparison of the sidecar against the Variant Table: the rewrite's
         read-back and the validator's `variant_table.source_alid_sidecar` both make it.
         A row past the sidecar's end is not compared; `n_rows` says the sidecar is short.
+        `start` is a row, so `expect_space` is required once bound (`SpaceBound`).
         """
+        self._require_bound(expect_space, "a variant row")
         held = max(min(start + len(values), self.n_rows) - start, 0)
         stored = np.asarray(self.state[start : start + held])
         expected = np.fromiter(

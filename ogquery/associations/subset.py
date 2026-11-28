@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -9,6 +10,7 @@ import numpy as np
 
 from ogquery.associations.cells import Cells, require_within
 from ogquery.associations.record import Associations, Inspection, Status
+from ogquery.guard import CellSpaces, require_cells
 
 if TYPE_CHECKING:
     from ogquery.indexed import IndexedSubset
@@ -26,6 +28,9 @@ class SubsetReader:
     carries_n = False
 
     def __init__(self, subset: IndexedSubset, *, source: str) -> None:
+        #: Its subset's spaces, learned from the release it sits in, never from a caller: that
+        #: release's Analyses, and its variant rows or a Hybrid's panel rows.
+        self.spaces: CellSpaces = subset.spaces
         self._subset = subset
         self._source = source
 
@@ -40,20 +45,28 @@ class SubsetReader:
             source=f"Indexed Variant Subset {name!r} of {store_path}",
         )
 
-    def read(self, cells: Cells, *, observed_only: bool = False) -> Associations:
+    def read(
+        self, cells: Cells, *, observed_only: bool = False, expect_spaces: CellSpaces
+    ) -> Associations:
         """The Analysis's present cells; raises `InvalidAssociations` on an invalid one."""
-        found = self.inspect(cells).associations(self._source)
+        require_cells(self.spaces, expect_spaces, "the cells")
+        found = self.inspect(cells, expect_spaces=expect_spaces).associations(self._source)
         keep = found.status != Status.MISSING
         if observed_only:
             keep &= found.status != Status.IMPUTED
-        return found.where(keep)
+        return replace(
+            found.where(keep),
+            variant_space=self.spaces.variant,
+            analysis_space=self.spaces.analysis,
+        )
 
-    def inspect(self, cells: Cells) -> Inspection:
+    def inspect(self, cells: Cells, *, expect_spaces: CellSpaces) -> Inspection:
+        require_cells(self.spaces, expect_spaces, "the cells")
         if cells.kind != "analysis":
             raise TypeError(f"an Indexed Variant Subset reads one Analysis, not {cells.kind!r}")
         col = cells.analysis_index
         require_within(cells, self._source, n_analyses=self._subset.n_analyses)
-        decoded = self._subset.decode_analysis(col)
+        decoded = self._subset.decode_analysis(col, expect_space=self._subset.index_space)
         eaf = (
             np.full(len(decoded.z), np.nan, dtype=np.float32)
             if decoded.eaf is None
