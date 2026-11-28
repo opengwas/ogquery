@@ -247,3 +247,122 @@ def test_a_csr_with_no_manifest_reads_with_the_identity_it_is_given(tmp_path: Pa
     assert reader.spaces.analysis == IndexSpace(RAGGED, ANALYSIS)
     found = reader.read(Cells.analysis(0), expect_spaces=reader.spaces)
     assert len(found["z"]) and np.all(found.analysis_index == 0)
+
+
+# ── review round 3 ───────────────────────────────────────────────────────────
+
+
+def test_an_analyses_table_read_from_elsewhere_is_not_stamped_with_the_directorys_identity(
+) -> None:
+    """The reviewers' case: `dense_rho`'s `analyses.tsv` given to `dense_completed` read its
+    Analysis `a` from another column under `dense_completed`'s stamp."""
+    from ogquery.analyses import AnalysesIndex
+    from ogquery.facade import StoreQuery
+
+    with pytest.raises(ReleaseIdUnknown, match="analyses.tsv"):
+        AnalysesIndex(RELEASES / "dense_completed", table=RELEASES / "dense_rho" / "analyses.tsv")
+    own = AnalysesIndex(
+        RELEASES / "dense_completed", table=RELEASES / "dense_completed" / "analyses.tsv"
+    )
+    assert own.require_index("a") == 0
+    component = open_release(RELEASES / "hybrid_completed" / "dense")
+    shared = AnalysesIndex(component.path, table=component.analyses_path)
+    assert shared.index_space == IndexSpace(HYBRID, ANALYSIS)
+    with StoreQuery(open_release(RELEASES / "dense_completed")) as q:
+        assert len(q.analysis("a")["z"])
+
+
+def test_a_hybrid_store_swapped_for_another_hybrids_is_refused(tmp_path: Path) -> None:
+    """The reviewers' case: `hybrid_observed`'s store in a copy of `hybrid_completed` agrees
+    on layout, state and dimensions, but holds 200 Overflow associations, not 199."""
+    path = copy(tmp_path, "hybrid_completed")
+    shutil.rmtree(path / "data.zarr")
+    shutil.copytree(RELEASES / "hybrid_observed" / "data.zarr", path / "data.zarr")
+    with pytest.raises(ReleaseIdUnknown, match="Overflow associations"):
+        group_identity(store_arrays.open_group(path / "data.zarr"))
+    with pytest.raises(ReleaseIdUnknown):
+        digests.open_query(path)
+
+
+def test_unreadable_store_metadata_is_refused_not_skipped(tmp_path: Path) -> None:
+    from ogquery.manifest import store_spaces
+
+    path = copy(tmp_path, "dense_completed")
+    (path / "data.zarr" / "z" / "zarr.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(ReleaseIdUnknown, match="unreadable"):
+        store_spaces(path / "data.zarr")
+    path = copy(tmp_path, "ragged_completed")
+    (path / "variant_alid_order.npy").write_bytes(b"not an array")
+    with pytest.raises(ReleaseIdUnknown, match="unreadable"):
+        store_spaces(path / "data.zarr")
+
+
+def test_absent_optional_metadata_is_skipped(tmp_path: Path) -> None:
+    """An archived 0.1.0 Overflow has no by-variant index: there are no rows to compare."""
+    from ogquery.manifest import store_spaces
+
+    path = copy(tmp_path, "ragged_completed")
+    shutil.rmtree(path / "data.zarr" / "ragged" / "by_variant")
+    assert store_spaces(path / "data.zarr").analysis.identity == RAGGED
+
+
+def test_a_quoted_multiline_label_is_one_analysis(tmp_path: Path) -> None:
+    import csv
+
+    from ogquery.manifest import store_spaces
+
+    path = copy(tmp_path, "dense_completed")
+    with (path / "analyses.tsv").open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fields, rows = list(reader.fieldnames or ()), list(reader)
+    rows[0]["analysis_label"] = "a label\nover two lines"
+    with (path / "analyses.tsv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+    assert (path / "analyses.tsv").read_text(encoding="utf-8").count("\n") == 4
+    assert store_spaces(path / "data.zarr").analysis.identity == ReleaseIdentity("s", "comp")
+
+
+def test_tiers_of_a_data_zarr_linked_into_another_release_are_refused(tmp_path: Path) -> None:
+    """The reviewers' case: `dense_completed`'s `data.zarr` a link to `dense_rho`'s returned
+    `dense_rho`'s tiers, with `root=` or without."""
+    path = copy(tmp_path, "dense_completed")
+    other = copy(tmp_path, "dense_rho")
+    shutil.rmtree(path / "data.zarr")
+    (path / "data.zarr").symlink_to(other / "data.zarr", target_is_directory=True)
+    release = open_release(path)
+    with pytest.raises(ReleaseIdUnknown, match="data.zarr"):
+        release.top_hit_tiers()
+    with pytest.raises(ReleaseIdUnknown, match="data.zarr"):
+        release.top_hit_tiers(release.arrays())
+
+
+def test_an_invented_identity_is_refused_where_the_linked_store_has_a_manifest(
+    tmp_path: Path,
+) -> None:
+    """The reviewers' case: a directory with no manifest, its `data.zarr` a link into a
+    release that has one, read under an `identity=` the caller made up."""
+    other = copy(tmp_path, "ragged_observed")
+    path = tmp_path / "bare"
+    path.mkdir()
+    (path / "data.zarr").symlink_to(other / "data.zarr", target_is_directory=True)
+    encoding = StoreManifest.load(other).encoding
+    invented = ReleaseIdentity("made", "up")
+    with pytest.raises(ReleaseIdUnknown, match="manifest"):
+        RaggedCSRReader(path, encoding, identity=invented)
+    with pytest.raises(ReleaseIdUnknown, match="manifest"):
+        CsrReader.open(path, encoding, requires_mask=False, identity=invented)
+
+
+def test_a_csr_reader_loads_its_manifest_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    loads: list[Path] = []
+    original = StoreManifest.load.__func__  # type: ignore[attr-defined]
+
+    def counting(cls: Any, path: Any) -> StoreManifest:
+        loads.append(Path(path))
+        return original(cls, path)  # type: ignore[no-any-return]
+
+    monkeypatch.setattr(StoreManifest, "load", classmethod(counting))
+    CsrReader.open(RELEASES / "ragged_completed")
+    assert len(loads) == 1, loads

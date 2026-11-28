@@ -28,7 +28,7 @@ from ogquery.encoding.codec import (
 )
 from ogquery.encoding.plan import EafBaselineError, StoreEncoding
 from ogquery.guard import IndexSpace, ReleaseIdentity, require_space
-from ogquery.manifest import StoreManifest, data_spaces
+from ogquery.manifest import StoreManifest, data_scope
 from ogquery.stored import optional_array
 
 #: The index group, under the Ragged component's own group (ADR 0060).
@@ -66,9 +66,35 @@ class ByVariantReader:
         n_axis: int | None = None,
         identity: ReleaseIdentity | None = None,
     ):
-        #: The variant axis this index is over: its release's, learned from its manifest, which
-        #: must describe the `data.zarr` read (`manifest.data_spaces`).
-        self.index_space = data_spaces(store_path, explicit=identity).variant
+        # The variant axis this index is over: its release's, learned from its manifest, which
+        # must describe the `data.zarr` read (`manifest.data_scope`).
+        spaces, manifest = data_scope(store_path, explicit=identity)
+        if encoding is None:
+            encoding = (manifest or StoreManifest.load(Path(store_path))).encoding
+        self._open(store_path, encoding, n_axis, spaces.variant)
+
+    @classmethod
+    def _discovered(
+        cls,
+        store_path: str | Path,
+        encoding: StoreEncoding,
+        n_axis: int | None,
+        index_space: IndexSpace,
+    ) -> ByVariantReader:
+        """Opened by a reader that has already learned its space from this release's
+        manifest (`CsrReader`), so the manifest is read once."""
+        reader = cls.__new__(cls)
+        reader._open(store_path, encoding, n_axis, index_space)
+        return reader
+
+    def _open(
+        self,
+        store_path: str | Path,
+        encoding: StoreEncoding,
+        n_axis: int | None,
+        index_space: IndexSpace,
+    ) -> None:
+        self.index_space = index_space
         self._ragged = store_arrays.open_group(Path(store_path) / RAGGED_ZARR_PATH)
         if BY_VARIANT_GROUP not in self._ragged:
             raise ValueError(
@@ -76,8 +102,6 @@ class ByVariantReader:
                 "index must be built before it is read (ADR 0060)"
             )
         self._index = self._ragged[BY_VARIANT_GROUP]
-        if encoding is None:
-            encoding = StoreManifest.load(Path(store_path)).encoding
         self._encoding = encoding
         self._require_arrays()
         self._require_members()

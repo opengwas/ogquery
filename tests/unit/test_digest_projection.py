@@ -478,3 +478,38 @@ def test_a_tolerance_that_is_not_a_finite_non_negative_number_is_refused(toleran
 def test_projected_arrays_say_they_are_the_answer_proof_not_the_cell_proof() -> None:
     doc = digests.projected_arrays.__doc__ or ""
     assert "answer proof" in doc and "cell proof" in doc and "#521" in doc
+
+
+# ── review round 3: what the proof does not compare ──────────────────────────
+
+
+def _with_column(found: dict[str, Any], name: str, values: list[Any]) -> dict[str, Any]:
+    table = {**found["tables"]["analyses_table"], name: np.array(values, dtype=object)}
+    return {**found, "tables": {**found["tables"], "analyses_table": table}}
+
+
+def test_clump_derived_columns_are_not_compared() -> None:
+    """§8b: Clumps are re-clumped, not compared with SOURCE's, and so are the Analysis
+    columns counted from them; the hit counts are compared."""
+    path = RELEASES / "dense_completed"
+    ours = digests.projected_arrays(path, reference_for(path))
+    n = len(ours["tables"]["analyses_table"]["analysis_index"])
+    for column in ("n_loci_5e8", "n_unclumped_5e8"):
+        assert column in digests.RECLUMPED_COLUMNS
+        assert column in (digests.array_differences.__doc__ or "")
+        a, b = _with_column(ours, column, ["1"] * n), _with_column(ours, column, ["2"] * n)
+        assert digests.array_differences(a, b) == [], column
+    hits = dict(ours["tables"]["analyses_table"])
+    changed = hits["n_hits_5e8"].copy()
+    changed[0] = "999"
+    table = {**hits, "n_hits_5e8": changed}
+    moved = {**ours, "tables": {**ours["tables"], "analyses_table": table}}
+    assert digests.array_differences(ours, moved) == ["tables/analyses_table/n_hits_5e8"]
+
+
+def test_aligned_nans_in_a_table_column_are_equal() -> None:
+    column = np.array([float("nan"), "x", None, 1.5], dtype=object)
+    found = {"tables": {"t": {"c": column}}}
+    assert digests.array_differences(found, {"tables": {"t": {"c": column.copy()}}}) == []
+    moved = np.array(["x", float("nan"), None, 1.5], dtype=object)
+    assert digests.array_differences(found, {"tables": {"t": {"c": moved}}}) == ["tables/t/c"]

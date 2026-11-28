@@ -35,7 +35,7 @@ import numpy as np
 
 from ogquery.alid import ParsedAlid
 from ogquery.alid_index import ABSENT, AlidIndex
-from ogquery.guard import PANEL, IndexSpace, require_space
+from ogquery.guard import PANEL, IndexSpace, SpaceBound, require_space
 from ogquery.hybrid import DenseComponentSharesAxis, panel_rows
 from ogquery.npy_sidecar import release_maps
 from ogquery.variant_axis import (
@@ -44,7 +44,7 @@ from ogquery.variant_axis import (
 )
 
 
-class PanelAlidIndex:
+class PanelAlidIndex(SpaceBound):
     """The shared ALID index of a 0.3.0 Hybrid, in its Dense Component's panel rows: an
     `AlidIndex` whose rows are the panel's. An ALID of a shared row off the panel is
     `ABSENT` here, as the component holds no such row."""
@@ -63,13 +63,14 @@ class PanelAlidIndex:
         rows[np.flatnonzero(held)] = np.where(on_panel, panel, ABSENT)
         return rows
 
-    def alids(self, rows: np.ndarray) -> np.ndarray:
+    def alids(self, rows: np.ndarray, *, expect_space: IndexSpace | None = None) -> np.ndarray:
+        self._require_bound(expect_space, "a panel row")
         rows = np.asarray(rows, dtype=np.int64).reshape(-1)
         inside = (rows >= 0) & (rows < self._dense_to_shared.size)
         out = np.full(rows.shape, None, dtype=object)
         if inside.any():
             shared = self._dense_to_shared[rows[inside]].astype(np.int64)
-            out[inside] = self._shared.alids(shared)
+            out[inside] = self._shared.alids(shared, expect_space=self._shared.index_space)
         return out
 
     def unindexed_rows(self, n_rows: int) -> np.ndarray:
@@ -153,7 +154,7 @@ class PanelVariantAxis:
         """The shared ALID index in panel rows (`PanelAlidIndex`)."""
         return PanelAlidIndex(
             self._shared.alid_index, self._dense_to_shared, self._shared.n_variants
-        )
+        ).bind(self.index_space)
 
     @property
     def rsid_index(self) -> Any:

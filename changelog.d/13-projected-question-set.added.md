@@ -11,8 +11,9 @@
 `array_differences(a, b, eaf_tolerance=...)` compares them before any hashing:
 
 - exactly, except `eaf`, which is compared within the tolerance. The tolerance must be finite and non-negative, or the comparison is refused;
-- NaN at the same place, and the same infinity, are equal everywhere;
+- NaN at the same place, and the same infinity, are equal everywhere, in object table columns too;
 - Rho answers bitwise, so a signed zero differs from its opposite;
-- a name difference is reported as `names/...` and fails no numeric comparison.
+- a name difference is reported as `names/...` and fails no numeric comparison;
+- the columns counted from the Clumps (`n_loci_5e8`, `n_unclumped_5e8`, `digests.RECLUMPED_COLUMNS`) are not compared, since a splice re-clumps (§8b).
 
 Without `reference`, nothing changes.

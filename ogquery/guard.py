@@ -12,12 +12,21 @@ Every entry point an integer can reach is told the space the integer came from
 its two index columns (`Associations.variant_space`, `.analysis_space`), so `resolve` can do the
 same. Nothing here defaults: an id that is missing, empty or the string ``'None'`` names no
 release, and refuses.
+
+**The assumption.** A `ReleaseIdentity` is taken to name one numbering of Analyses and
+variants. Every real release's does: a build, a completion and a splice each mint a new
+`release_id` (opengwasdb ADR 0109 §1, the `_stamp` pattern), so a renumbered release never
+shares its source's. An in-place post addition keeps its `release_id` (stores ADR 0044; ADR
+0109 §9) but adds Rho or Clumps and renumbers nothing. Two directories that claim the same
+`(store_id, release_id)` with different numberings cannot be told apart by this guard, and
+an index cached from one reads in the other. The contract fixtures `hybrid_observed` and
+`hybrid_overflow_only` both claim `hyb`/`v1`; no test relies on telling them apart.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Self
 
 #: The axes an index numbers. A Hybrid's shared variant axis is `VARIANT`; the rows of its
 #: Dense Component's panel are `PANEL`, a different numbering of the same release.
@@ -119,3 +128,35 @@ def require_cells(owner: CellSpaces, expected: CellSpaces | None, what: str) -> 
         raise ReleaseMismatchError(owner.variant, None, what)
     require_space(owner.variant, expected.variant, what)
     require_space(owner.analysis, expected.analysis, what)
+
+
+class SpaceBound:
+    """A decoder of one release's files that a Variant Axis hands out bound to its space.
+
+    A sidecar decoder (`AlidSidecar`, `FixedWidthAlidIndex`, `RsidIndex`, `PositionSidecar`,
+    `SourceAlidSidecar`, a Dense Component's `PanelAlidIndex`) reads rows by index. Opened
+    from its files it holds no release identity, and reads any row it is given. The axis
+    that opens it binds it to the axis's space (`bind`). From then on each of its methods that
+    takes a row requires the space that row came from (``expect_space=``), as the axis's own
+    methods do, so a cached index reaching it through the axis's attribute
+    (`axis.alid_index.alids(rows)`) is refused unless its space is named, and named right.
+    """
+
+    _bound_space: IndexSpace | None = None
+
+    @property
+    def index_space(self) -> IndexSpace | None:
+        """The space it is bound to; None for a decoder opened from its files alone."""
+        return self._bound_space
+
+    def bind(self, space: IndexSpace) -> Self:
+        """Bind it to `space`, and return it. A decoder bound to one space is never rebound
+        to another."""
+        if self._bound_space is not None and self._bound_space != space:
+            raise ReleaseMismatchError(self._bound_space, space, "rebinding a decoder")
+        self._bound_space = space
+        return self
+
+    def _require_bound(self, expect_space: IndexSpace | None, what: str) -> None:
+        if self._bound_space is not None:
+            require_space(self._bound_space, expect_space, what)

@@ -16,8 +16,8 @@ from collections.abc import ItemsView, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from ogquery.guard import ANALYSIS, IndexSpace, ReleaseIdentity
-from ogquery.manifest import release_identity
+from ogquery.guard import ANALYSIS, IndexSpace, ReleaseIdentity, ReleaseIdUnknown
+from ogquery.manifest import release_identity, release_scope_of
 
 
 class UnknownAnalysisError(ValueError):
@@ -84,6 +84,22 @@ def analysis_label(row: Mapping[str, str]) -> str:
     return row.get("analysis_label") or row.get("analysis_id", "")
 
 
+def _require_own_table(store_path: Path, table: Path) -> None:
+    """A `table=` is stamped with `store_path`'s identity, so it must be the table that
+    release numbers its Analyses by (`ReleaseScope.analyses_path`: its own, or a Dense
+    Component's Hybrid's), by real path. Any other would number them under a stamp it does
+    not hold. Where `store_path` has no manifest there is no identity to stamp: the index
+    then refuses unless it is given one (`index_space`)."""
+    if not (store_path / "manifest.json").is_file():
+        return
+    own = release_scope_of(store_path).analyses_path
+    if table.resolve() != own.resolve():
+        raise ReleaseIdUnknown(
+            f"{table} is not the analyses.tsv the release at {store_path} numbers its Analyses "
+            f"by ({own}): its rows would be stamped with that release's identity"
+        )
+
+
 class AnalysesIndex:
     """`analyses.tsv` read once, keyed by `analysis_id` and by `analysis_index`.
 
@@ -103,6 +119,8 @@ class AnalysesIndex:
         self._identity = identity
         self._index_space: IndexSpace | None = None
         path = Path(table) if table is not None else Path(store_path) / "analyses.tsv"
+        if table is not None:
+            _require_own_table(self._store_path, path)
         rows = read_analyses(path).rows
         self._by_id: dict[str, dict[str, str]] = {}
         self._by_index: dict[int, dict[str, str]] = {}

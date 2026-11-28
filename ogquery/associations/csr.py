@@ -27,15 +27,10 @@ from ogquery.by_variant import ByVariantReader, VariantIndexError, has_variant_i
 from ogquery.csr import RAGGED_ZARR_PATH, RaggedCSRReader
 from ogquery.encoding.plan import StoreEncoding
 from ogquery.guard import CellSpaces, ReleaseIdentity, require_cells
-from ogquery.manifest import StoreManifest, data_spaces
+from ogquery.manifest import data_scope
 
 #: A by-variant index decode's columns, in `Inspection.of`'s order.
 _block_columns = itemgetter("variant_index", "analysis_index", "z", "se", "eaf", "imputed")
-
-
-def _manifest(path: Path) -> StoreManifest | None:
-    """The release manifest beside a sequence, or None for a bare sequence."""
-    return StoreManifest.load(path) if (path / "manifest.json").exists() else None
 
 
 def _run(positions: np.ndarray) -> tuple[int, int] | None:
@@ -86,9 +81,9 @@ class CsrReader:
     ) -> None:
         self._path = Path(store_path)
         # Which release this reads is settled first, before the mask or a plane is asked
-        # about: a `data.zarr` its manifest does not describe is refused as that.
-        data_spaces(self._path, explicit=identity)
-        manifest = _manifest(self._path)
+        # about: a `data.zarr` its manifest does not describe is refused as that. Its
+        # manifest is read once, here, and its spaces handed to the structure beneath.
+        self._spaces, manifest = data_scope(self._path, explicit=identity)
         if encoding is None:
             if manifest is None:
                 raise ValueError(f"{source}: no manifest to read the encoding from")
@@ -105,8 +100,7 @@ class CsrReader:
         record.require_mask(
             record.mask_required(requires_mask, state, source), "imputed" in group, source
         )
-        self.structure = RaggedCSRReader(store_path, encoding, identity=identity)
-        self._identity = identity
+        self.structure = RaggedCSRReader._discovered(store_path, encoding, self._spaces)
         self._by_variant: ByVariantReader | None = None
         #: The variant axis `open_variant_index` was given; a CSR records none itself.
         self._n_variants: int | None = None
@@ -164,8 +158,8 @@ class CsrReader:
                 f"Store at {self._path} carries no variant index (ragged/by_variant); "
                 f"build it with 'ogdb build-variant-index {self._path}'"
             )
-        self._by_variant = ByVariantReader(
-            self._path, self._encoding, n_axis=n_variants, identity=self._identity
+        self._by_variant = ByVariantReader._discovered(
+            self._path, self._encoding, n_variants, self._spaces.variant
         )
         self._n_variants = int(n_variants)
 

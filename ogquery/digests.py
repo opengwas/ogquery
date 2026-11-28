@@ -1107,6 +1107,11 @@ def projected_arrays(
 #: what `projected_arrays` puts apart from the numbers, under ``names``.
 NAME_COLUMNS = ("rsid", "source_alid")
 
+#: The `analyses.tsv` columns counted from the Clumps (ADR 0109 §4): a splice re-clumps, so a
+#: kept Analysis's may legitimately change, and §8b leaves them to validation's `clumps.*`
+#: rules. `array_differences` does not compare them.
+RECLUMPED_COLUMNS = ("n_loci_5e8", "n_unclumped_5e8")
+
 
 def _put(
     found: dict[str, dict[str, Any]],
@@ -1157,7 +1162,11 @@ def array_differences(
     name that differs is reported as ``names/<section>/<question>/<column>`` and fails no
     number, so the proof can hold the name differences against the variants splice listed
     (§7). A refusal is compared by type and message. The sections and questions of the two
-    must be the same."""
+    must be the same.
+
+    **Not compared:** the columns counted from the Clumps, `RECLUMPED_COLUMNS`
+    (``n_loci_5e8``, ``n_unclumped_5e8``). ADR 0109 §8b: Clumps are re-clumped, not compared
+    with SOURCE's, and validation judges them. The hit counts (``n_hits_*``) are compared."""
     tolerance = float(eaf_tolerance)
     if not math.isfinite(tolerance) or tolerance < 0:
         raise ValueError(
@@ -1194,6 +1203,8 @@ def _array_fields_differing(
         return [] if repr(ours) == repr(theirs) else ["rows"]
     out = []
     for field in sorted(set(ours) | set(theirs)):
+        if field in RECLUMPED_COLUMNS:
+            continue
         if field not in ours or field not in theirs:
             out.append(field)
             continue
@@ -1230,7 +1241,16 @@ def _arrays_agree(a: np.ndarray, b: np.ndarray, tolerance: float) -> bool:
             return False
         finite = ~(nan | infinite)
         return bool(np.all(np.abs(a[finite].astype("float64") - b[finite]) <= tolerance))
+    if a.dtype.kind == "O" or b.dtype.kind == "O":
+        return all(_values_equal(x, y) for x, y in zip(a.ravel(), b.ravel(), strict=True))
     return bool(np.array_equal(a, b))
+
+
+def _values_equal(a: Any, b: Any) -> bool:
+    """One value of an object column against another: NaN at the same place is equal."""
+    if isinstance(a, float) and isinstance(b, float) and math.isnan(a) and math.isnan(b):
+        return True
+    return bool(type(a) is type(b) and a == b)
 
 
 #: How many of each answer's first rows `readable_answer` spells out.

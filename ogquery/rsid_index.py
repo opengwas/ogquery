@@ -39,6 +39,7 @@ from pathlib import Path
 import numpy as np
 
 from ogquery.alid import RSID_DTYPE, is_indexable_rsid
+from ogquery.guard import IndexSpace, SpaceBound
 from ogquery.npy_sidecar import invert_rows, open_pair_or_none
 
 VARIANT_RSID_BYTES_FILENAME = "variant_rsid_bytes.npy"
@@ -74,7 +75,7 @@ def _scan_cost(n_wanted: int) -> float:
     return _SCAN_COST_PER_CALL + _SCAN_COST_PER_ROW * n_wanted
 
 
-class RsidIndex:
+class RsidIndex(SpaceBound):
     """A release's rsID index, memory-mapped."""
 
     def __init__(self, names: np.ndarray, rows: np.ndarray) -> None:
@@ -116,9 +117,13 @@ class RsidIndex:
         hi = int(np.searchsorted(self.names, query, side="right"))
         return np.asarray(self.rows[lo:hi], dtype="int32")
 
-    def rsids(self, rows: np.ndarray, n_rows: int) -> np.ndarray:
+    def rsids(
+        self, rows: np.ndarray, n_rows: int, *, expect_space: IndexSpace | None = None
+    ) -> np.ndarray:
         """Each of `rows`' rsID, in `rows`' order, as an object array; None for a row the
-        index does not name. `n_rows` is the axis's length: a row outside it is refused."""
+        index does not name. `n_rows` is the axis's length: a row outside it is refused.
+        `expect_space` is the rows', required once bound (`SpaceBound`)."""
+        self._require_bound(expect_space, "a variant row")
         rows = np.asarray(rows, dtype=np.int64).reshape(-1)
         out = np.full(rows.size, None, dtype=object)
         if not rows.size:

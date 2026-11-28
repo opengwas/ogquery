@@ -223,15 +223,26 @@ class StoreRelease(ReleasePaths):
 
         `root` must be this release's own `data.zarr`, by its real path: a Hybrid and its
         Dense Component share an identity, but the component's tiers hold panel rows, so
-        identity alone cannot tell one's arrays from the other's."""
+        identity alone cannot tell one's arrays from the other's. A `data.zarr` that is a
+        link into another release is not its own either, with `root` or without."""
+        own = self._own_data()
         if root is None:
             root = self.arrays()
-        else:
-            self._require_own_arrays(root)
+        self._require_own_arrays(root, own)
         return TopHitTiers(root, clumps=self.manifest.clumps)
 
-    def _require_own_arrays(self, root: Any) -> None:
+    def _own_data(self) -> Path:
+        """The real path of this release's `data.zarr`, refused where it resolves out of
+        the release's own directory (a link into another release)."""
         own = (self.path / "data.zarr").resolve()
+        if own.parent != self.path.resolve():
+            raise ReleaseIdUnknown(
+                f"{self.path / 'data.zarr'} resolves to {own}, outside the release at "
+                f"{self.path}: its arrays are another release's"
+            )
+        return own
+
+    def _require_own_arrays(self, root: Any, own: Path) -> None:
         local = getattr(root.store, "root", None)
         found = None if local is None else Path(local).resolve()
         if found != own or str(getattr(root, "path", "")).strip("/"):

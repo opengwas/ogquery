@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -261,7 +262,11 @@ class VariantAxis:
         # The ALID index the release's `format_version` carries, and no other
         # (`open_alid_index`): format 0.3.0's sidecar or the 0.2 series' fixed-width pair.
         # A release missing it is refused here, never read by scanning the table.
-        self._alid_index = open_alid_index(self.store_path, format_version)
+        # Every decoder this axis hands out is bound to its space (`guard.SpaceBound`): a
+        # row read through `alid_index`, `rsid_index` or a sidecar names the space it is in.
+        self._alid_index = open_alid_index(self.store_path, format_version).bind(
+            self.index_space
+        )
         self._n_variants = (
             len(self._offsets) if self._offsets is not None else _sidecar_rows(self._alid_index)
         )
@@ -282,6 +287,8 @@ class VariantAxis:
         # before that index existed). On 0.3.0 it is also how a row's rsID is named,
         # so a 0.3.0 release without it is refused rather than read as naming none.
         self._rsid_index = RsidIndex.open(self.store_path)
+        if self._rsid_index is not None:
+            self._rsid_index.bind(self.index_space)
         if self._rsid_index is None and not self.reads_table:
             raise MissingRsidIndex(
                 f"{self.store_path}: format_version {format_version} names each row's rsID "
@@ -321,6 +328,7 @@ class VariantAxis:
             self._position_sidecar = PositionSidecar.open(self.store_path)
             if self._position_sidecar is None:  # removed since this axis was opened
                 raise MissingPositionSidecar(f"{self.store_path}: the position sidecar is gone")
+            self._position_sidecar.bind(self.index_space)
         return self._position_sidecar
 
     @property
@@ -334,6 +342,7 @@ class VariantAxis:
                 raise MissingSourceAlidSidecar(
                     f"{self.store_path}: the source_alid sidecar is gone"
                 )
+            self._source_alid_sidecar.bind(self.index_space)
         return self._source_alid_sidecar
 
     def _sources(self) -> SourceAlidSidecar:
@@ -578,7 +587,7 @@ class VariantAxis:
         vi = np.asarray(variant_index, dtype=np.int64).reshape(-1)
         if not self.reads_table:
             assert self._rsid_index is not None, "a 0.3.0 axis is refused without one"
-            return self._rsid_index.rsids(vi, self.n_variants)
+            return self._rsid_index.rsids(vi, self.n_variants, expect_space=self.index_space)
         return self._table_column(vi, "rsid")
 
     def source_alids_by_indices(
@@ -599,7 +608,10 @@ class VariantAxis:
             return self._table_column(vi, "source_alid")
         held = (vi >= 0) & (vi < self.n_variants)
         out = np.full(vi.size, None, dtype=object)
-        out[held] = self._sources().values(vi[held], self._alid_index.alids)
+        out[held] = self._sources().values(
+            vi[held], partial(self._alid_index.alids, expect_space=self.index_space),
+            expect_space=self.index_space,
+        )
         return out
 
     def _table_column(self, vi: np.ndarray, column: str) -> np.ndarray:
@@ -731,7 +743,7 @@ class VariantAxis:
         """
         require_space(self.index_space, expect_space, "a variant index")
         vi = np.asarray(variant_index, dtype="int64")
-        alids = self._alid_index.alids(vi)
+        alids = self._alid_index.alids(vi, expect_space=self.index_space)
         for slot in [k for k, alid in enumerate(alids) if alid is None]:
             record = self.by_index(int(vi[slot]), expect_space=self.index_space)
             if record is None:
@@ -793,7 +805,7 @@ class VariantAxis:
         """
         if not self.reads_table:
             sidecar = self._sources()
-            if not sidecar.sourced(0, sidecar.n_rows):
+            if not sidecar.sourced(0, sidecar.n_rows, expect_space=self.index_space):
                 return None
             return sidecar.rows_of(wanted, self._alid_index.search)
         found: dict[str, int] = {}

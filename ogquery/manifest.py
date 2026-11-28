@@ -326,15 +326,26 @@ def store_spaces(store: str | Path, *, explicit: ReleaseIdentity | None = None) 
     **The limit.** A store that agrees with another release's manifest on all of these -- an
     exact structural twin, two releases built alike from inputs of the same shape -- cannot
     be told from its own: nothing in a store names the release that wrote it. Telling them
-    apart needs an identity the writer stamps into the store (opengwasdb's to add)."""
-    path = Path(store).resolve()
+    apart needs an identity the writer stamps into the store (opengwasdb's to add).
+
+    It also assumes a `(store_id, release_id)` pair names one release, which every real
+    release does: a build, a completion and a splice each mint a new `release_id`
+    (`ogquery.guard`). Two directories that claim the same pair are not told apart."""
+    return _bound(Path(store), explicit)[0]
+
+
+def _bound(
+    store: Path, explicit: ReleaseIdentity | None
+) -> tuple[CellSpaces, StoreManifest | None]:
+    """`store_spaces`, with the manifest it read (None where it read none)."""
+    path = store.resolve()
     manifest_path = path.parent / "manifest.json"
     if path.name != "data.zarr" or not manifest_path.is_file():
         return _explicit(
             explicit,
             f"cannot learn which release the Zarr store at {str(path)!r} belongs to: it is not "
             "the data.zarr of a release with a manifest.json",
-        )
+        ), None
     scope = release_scope_of(path.parent)
     faults = _store_faults(path, scope)
     if faults:
@@ -342,26 +353,45 @@ def store_spaces(store: str | Path, *, explicit: ReleaseIdentity | None = None) 
             f"{manifest_path} is not this store's manifest: {'; '.join(faults)} ({path})"
         )
     _agrees(scope.spaces, explicit, manifest_path)
-    return scope.spaces
+    return scope.spaces, scope.manifest
 
 
 def data_spaces(release: str | Path, *, explicit: ReleaseIdentity | None = None) -> CellSpaces:
-    """The spaces of what a reader opening ``<release>/data.zarr`` reads (`store_spaces`).
-    The store must be that release's own: a ``data.zarr`` that is a link into another
-    release is refused, since the manifest at `release` does not describe it. A release
-    directory with no manifest takes `explicit`."""
+    """The spaces of what a reader opening ``<release>/data.zarr`` reads (`data_scope`)."""
+    return data_scope(release, explicit=explicit)[0]
+
+
+def data_scope(
+    release: str | Path, *, explicit: ReleaseIdentity | None = None
+) -> tuple[CellSpaces, StoreManifest | None]:
+    """The spaces of what a reader opening ``<release>/data.zarr`` reads (`store_spaces`),
+    and the release's manifest, read once (None where the directory has none).
+
+    The store must be that release's own. A ``data.zarr`` that is a link out of `release` is
+    refused where either side has a manifest: the one at `release` does not describe what
+    it would read, and the one beside the link's target decides that store's identity, so
+    no `explicit` identity may stand in for it. A directory with no manifest, whose store
+    is its own or a link to a store with none, takes `explicit`."""
     directory = Path(release).resolve()
     store = Path(release) / "data.zarr"
-    if not (directory / "manifest.json").is_file():
+    own = (directory / "manifest.json").is_file()
+    target = store.resolve() if store.exists() else None
+    if target is not None and target.parent != directory:
+        if own or (target.parent / "manifest.json").is_file():
+            raise ReleaseIdUnknown(
+                f"{store} resolves to {target}, outside the release at {directory}: "
+                + (
+                    "its manifest does not describe the data.zarr it would read"
+                    if own
+                    else f"the manifest at {target.parent} decides that store's identity, "
+                    "and no identity= may stand in for it"
+                )
+            )
+    if not own:
         return _explicit(
             explicit, f"cannot learn which release {str(directory)!r} is: it has no manifest.json"
-        )
-    if store.exists() and store.resolve().parent != directory:
-        raise ReleaseIdUnknown(
-            f"{store} resolves to {store.resolve()}, outside the release at {directory}: its "
-            f"manifest does not describe the data.zarr it would read"
-        )
-    return store_spaces(store, explicit=explicit)
+        ), None
+    return _bound(store, explicit)
 
 
 def _explicit(explicit: ReleaseIdentity | None, cannot: str) -> CellSpaces:
@@ -379,32 +409,40 @@ def _agrees(found: CellSpaces, explicit: ReleaseIdentity | None, manifest_path: 
 
 
 def _store_faults(store: Path, scope: ReleaseScope) -> list[str]:
-    """How the Zarr store at `store` disagrees with the release `scope` describes."""
+    """How the Zarr store at `store` disagrees with the release `scope` describes. Metadata
+    the store or release does not carry is skipped; metadata it carries that cannot be read
+    is refused (`_unreadable`), never taken for absent."""
     manifest = scope.manifest
     dense = manifest.primary_layout is PrimaryStorageLayout.DENSE
+    hybrid = manifest.primary_layout is PrimaryStorageLayout.HYBRID
     ragged = (store / "ragged").is_dir()
     if ragged == dense:
         return [
             f"it describes a {manifest.primary_layout.value} release but the store "
             f"{'has' if ragged else 'has no'} ragged/ component"
         ]
+    associations: int | None = None
     if dense:
         records, shape = _zarr_attributes(store), _zarr_shape(store / "z")
-        recorded_analyses: Any = None if shape is None else shape[1]
+        recorded_analyses = None if shape is None else shape[1]
         recorded_rows = None if shape is None else shape[0]
     else:
         records = _zarr_attributes(store / "ragged")
         offsets = _zarr_shape(store / "ragged" / "offsets")
-        recorded_analyses = records.get("n_analyses", None if offsets is None else offsets[0] - 1)
+        recorded_analyses = _recorded_int(
+            records, "n_analyses", store / "ragged", None if offsets is None else offsets[0] - 1
+        )
+        sequence = _zarr_shape(store / "ragged" / "variant_index")
+        associations = _recorded_int(
+            records, "n_associations", store / "ragged", None if sequence is None else sequence[0]
+        )
         by_variant = _zarr_shape(store / "ragged" / "by_variant" / "offsets")
         recorded_rows = None if by_variant is None else by_variant[0] - 1
-    n_rows = _n_rows(scope)
     faults = []
     layout = records.get("layout")
     if layout is not None and layout != ("dense" if dense else "ragged"):
         faults.append(f"the store records layout {layout!r}")
     state = records.get("completion_state")
-    hybrid = manifest.primary_layout is PrimaryStorageLayout.HYBRID
     if state is not None and not hybrid and state != manifest.completion_state.value:
         faults.append(
             f"the store records completion state {state!r}, the manifest "
@@ -412,48 +450,103 @@ def _store_faults(store: Path, scope: ReleaseScope) -> list[str]:
         )
     n_analyses = _n_analyses(scope.analyses_path)
     if recorded_analyses is not None and n_analyses is not None:
-        if int(recorded_analyses) != n_analyses:
-            faults.append(
-                f"the store holds {int(recorded_analyses)} Analyses, the release {n_analyses}"
-            )
+        if recorded_analyses != n_analyses:
+            faults.append(f"the store holds {recorded_analyses} Analyses, the release {n_analyses}")
+    n_rows = _n_rows(scope)
     if recorded_rows is not None and n_rows is not None and recorded_rows != n_rows:
         faults.append(f"the store holds {recorded_rows} variant rows, the release {n_rows}")
+    overflow = _overflow_associations(manifest) if hybrid else None
+    if overflow is not None and associations is not None and overflow != associations:
+        faults.append(
+            f"the store holds {associations} Overflow associations, the manifest records "
+            f"{overflow} (provenance.hybrid.n_overflow_associations)"
+        )
     return faults
 
 
+def _overflow_associations(manifest: StoreManifest) -> int | None:
+    """The Overflow association count a Hybrid manifest records, if it records one."""
+    recorded = manifest.provenance.get("hybrid")
+    if not isinstance(recorded, dict) or "n_overflow_associations" not in recorded:
+        return None
+    value = recorded["n_overflow_associations"]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _unreadable(
+            Path("manifest.json"),
+            f"provenance.hybrid.n_overflow_associations is {value!r}, not a count",
+        )
+    return value
+
+
+def _recorded_int(records: dict[str, Any], key: str, where: Path, fallback: int | None) -> Any:
+    """`records[key]` as a count, `fallback` where the store does not record it."""
+    if key not in records:
+        return fallback
+    value = records[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _unreadable(where, f"its {key!r} attribute is {value!r}, not a count")
+    return value
+
+
+def _unreadable(path: Path, why: str) -> ReleaseIdUnknown:
+    return ReleaseIdUnknown(
+        f"{path} is unreadable ({why}), so whether its manifest describes the store cannot be "
+        "told: it is refused, not skipped"
+    )
+
+
 def _zarr_attributes(group: Path) -> dict[str, Any]:
-    """A Zarr group's recorded attributes, read from its metadata alone (v3, then v2)."""
+    """A Zarr group's recorded attributes, read from its metadata alone (v3, then v2): none
+    where it has no metadata, refused where its metadata cannot be read."""
     for name, key in (("zarr.json", "attributes"), (".zattrs", None)):
         document = _json(group / name)
-        if isinstance(document, dict):
-            found = document if key is None else document.get(key, {})
-            return dict(found) if isinstance(found, dict) else {}
+        if document is None:
+            continue
+        found = document.get(key, {}) if isinstance(document, dict) and key else document
+        if not isinstance(document, dict) or not isinstance(found, dict):
+            raise _unreadable(group / name, "not a JSON object of attributes")
+        return dict(found)
     return {}
 
 
 def _zarr_shape(array: Path) -> tuple[int, ...] | None:
-    """A Zarr array's recorded shape, from its metadata alone (v3, then v2); None if absent."""
+    """A Zarr array's recorded shape, from its metadata alone (v3, then v2); None where the
+    array is absent, refused where its metadata cannot be read."""
     for name in ("zarr.json", ".zarray"):
         document = _json(array / name)
-        if isinstance(document, dict) and isinstance(document.get("shape"), list):
-            return tuple(int(n) for n in document["shape"])
+        if document is None:
+            continue
+        shape = document.get("shape") if isinstance(document, dict) else None
+        if not isinstance(shape, list) or not all(
+            isinstance(n, int) and not isinstance(n, bool) for n in shape
+        ):
+            raise _unreadable(array / name, "it records no shape")
+        return tuple(shape)
     return None
 
 
 def _json(path: Path) -> Any:
+    """The JSON document at `path`; None where there is none, refused where it cannot be
+    read."""
+    if not path.exists():
+        return None
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
+    except (OSError, ValueError) as error:
+        raise _unreadable(path, f"{type(error).__name__}: {error}") from error
 
 
 def _n_analyses(path: Path) -> int | None:
-    """The Analyses `analyses.tsv` lists, by its rows; None where there is no table."""
-    try:
-        with path.open("rb") as handle:
-            return max(sum(1 for line in handle if line.strip()) - 1, 0)
-    except OSError:
+    """The Analyses `analyses.tsv` lists, read by its one reader (`analyses.read_analyses`,
+    so a quoted label over two lines is one row); None where there is no table."""
+    from ogquery.analyses import read_analyses  # it imports this module
+
+    if not path.exists():
         return None
+    try:
+        return len(read_analyses(path).rows)
+    except (OSError, ValueError) as error:
+        raise _unreadable(path, f"{type(error).__name__}: {error}") from error
 
 
 #: The variant axis's row count, by the first of these the release carries: format 0.3.0's
@@ -474,9 +567,11 @@ def _n_rows(scope: ReleaseScope) -> int | None:
 
 
 def _npy_length(path: Path) -> int | None:
-    if not path.is_file():
+    """The length of the array at `path`; None where there is none, refused where it cannot
+    be read."""
+    if not path.exists():
         return None
     try:
         return int(np.load(path, mmap_mode="r").shape[0])
-    except (OSError, ValueError):
-        return None
+    except (OSError, ValueError, IndexError) as error:
+        raise _unreadable(path, f"{type(error).__name__}: {error}") from error

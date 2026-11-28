@@ -29,7 +29,7 @@ from ogquery.guard import (
     require_cells,
     require_space,
 )
-from ogquery.manifest import StoreManifest, data_spaces
+from ogquery.manifest import StoreManifest, data_scope
 
 RAGGED_ZARR_PATH = "data.zarr/ragged"
 
@@ -59,21 +59,35 @@ class RaggedCSRReader:
         *,
         identity: ReleaseIdentity | None = None,
     ):
-        #: The numbering of this sequence's cells: its release's variant axis and Analyses,
-        #: learned from the release's manifest, which must describe the `data.zarr` read
-        #: (`manifest.data_spaces`; `identity=` only where no manifest is reachable).
-        self.spaces = data_spaces(store_path, explicit=identity)
+        # The numbering of this sequence's cells: its release's variant axis and Analyses,
+        # learned from the release's manifest, which must describe the `data.zarr` read
+        # (`manifest.data_scope`; `identity=` only where no manifest is reachable).
+        spaces, manifest = data_scope(store_path, explicit=identity)
+        if encoding is None:
+            # The plan is read from the release's manifest, never inferred from the
+            # array's dtype: a store that disagrees with its own manifest must fail
+            # validation, not decode as whatever the bytes happen to look like.
+            encoding = (manifest or StoreManifest.load(Path(store_path))).encoding
+        self._open(store_path, encoding, spaces)
+
+    @classmethod
+    def _discovered(
+        cls, store_path: str | Path, encoding: StoreEncoding, spaces: CellSpaces
+    ) -> RaggedCSRReader:
+        """Opened by a reader that has already learned `spaces` from this release's
+        manifest (`CsrReader`, by `manifest.data_scope`), so the manifest is read once."""
+        reader = cls.__new__(cls)
+        reader._open(store_path, encoding, spaces)
+        return reader
+
+    def _open(self, store_path: str | Path, encoding: StoreEncoding, spaces: CellSpaces) -> None:
+        self.spaces = spaces
         path = Path(store_path) / RAGGED_ZARR_PATH
         self._root = store_arrays.open_group(path)
         self._offsets: zarr.Array = self._root["offsets"]
         self._offsets_cache: np.ndarray | None = None
         self._variant_index: zarr.Array = self._root["variant_index"]
         self._z: zarr.Array = self._root["z"]
-        # The plan is read from the release's manifest, never inferred from the
-        # array's dtype: a store that disagrees with its own manifest must fail
-        # validation, not decode as whatever the bytes happen to look like.
-        if encoding is None:
-            encoding = StoreManifest.load(Path(store_path)).encoding
         self._codec = StoreDecoder(encoding, z_overflow=ZOverflowTable.open(self._root))
         # Every EAF read goes through the plane, which gathers the per-variant
         # baseline (and, on a Reference-Completed release, the panel frequency

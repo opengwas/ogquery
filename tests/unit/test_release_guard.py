@@ -26,7 +26,8 @@ import numpy as np
 import pytest
 
 from ogquery import digests
-from ogquery.associations import Associations
+from ogquery.alid_index import FixedWidthAlidIndex
+from ogquery.associations import Associations, SubsetReader
 from ogquery.associations.cells import Cells
 from ogquery.guard import (
     ANALYSIS,
@@ -175,6 +176,12 @@ def entry_points() -> dict[str, tuple[Any, Callable[[Any], Any]]]:
         ragged._reader.open_variant_index(ragged._variant_axis.n_variants)
         by_variant = ragged._reader._by_variant
     cells = Cells.analysis(0)
+    axis = ragged._variant_axis
+    panel = hybrid._dense._variant_axis
+    subset_reader = SubsetReader.open(RELEASES / "dense_completed", "contract")
+    fixed_width = FixedWidthAlidIndex(
+        np.array([b"1:1:A:C"], dtype="S32"), np.array([0], dtype=np.int64)
+    ).bind(axis.index_space)
     return {
         "VariantAxis.by_index": (
             ragged.variant_space,
@@ -205,12 +212,82 @@ def entry_points() -> dict[str, tuple[Any, Callable[[Any], Any]]]:
             lambda e: ragged._variant_axis.sidecar_records(rows, expect_space=e),
         ),
         "PanelVariantAxis.by_index": (
-            dense.variant_space,
-            lambda e: dense._variant_axis.by_index(0, expect_space=e),
+            panel.index_space,
+            lambda e: panel.by_index(0, expect_space=e),
         ),
         "PanelVariantAxis.identity_by_indices": (
             hybrid._dense.variant_space,
             lambda e: hybrid._dense._variant_axis.identity_by_indices(rows, expect_space=e),
+        ),
+        "PanelVariantAxis.by_indices": (
+            panel.index_space,
+            lambda e: panel.by_indices([0], expect_space=e),
+        ),
+        "PanelVariantAxis.rsids_by_indices": (
+            panel.index_space,
+            lambda e: panel.rsids_by_indices(rows, expect_space=e),
+        ),
+        "PanelVariantAxis.source_alids_by_indices": (
+            panel.index_space,
+            lambda e: panel.source_alids_by_indices(rows, expect_space=e),
+        ),
+        "PanelVariantAxis.rows_by_indices": (
+            panel.index_space,
+            lambda e: panel.rows_by_indices(rows, expect_space=e),
+        ),
+        "SubsetReader.read": (
+            subset_reader.spaces,
+            lambda e: subset_reader.read(Cells.analysis(0), expect_spaces=e),
+        ),
+        "SubsetReader.inspect": (
+            subset_reader.spaces,
+            lambda e: subset_reader.inspect(Cells.analysis(0), expect_spaces=e),
+        ),
+        # Review round 3: the decoders an axis hands out are bound to its space.
+        "AlidSidecar.alids": (
+            axis.index_space,
+            lambda e: axis.alid_index.alids(rows, expect_space=e),
+        ),
+        "AlidSidecar.alid": (axis.index_space, lambda e: axis.alid_index.alid(0, expect_space=e)),
+        "FixedWidthAlidIndex.alids": (
+            axis.index_space,
+            lambda e: fixed_width.alids(np.array([0]), expect_space=e),
+        ),
+        "PanelAlidIndex.alids": (
+            panel.index_space,
+            lambda e: panel.alid_index.alids(rows, expect_space=e),
+        ),
+        "RsidIndex.rsids": (
+            axis.index_space,
+            lambda e: axis.rsid_index.rsids(rows, axis.n_variants, expect_space=e),
+        ),
+        "PositionSidecar.chromosomes_of": (
+            axis.index_space,
+            lambda e: axis.position_sidecar.chromosomes_of(rows, expect_space=e),
+        ),
+        "PositionSidecar.placements": (
+            axis.index_space,
+            lambda e: axis.position_sidecar.placements(rows, expect_space=e),
+        ),
+        "PositionSidecar.misplaced": (
+            axis.index_space,
+            lambda e: axis.position_sidecar.misplaced(0, ["1"], [1], expect_space=e),
+        ),
+        "SourceAlidSidecar.values": (
+            axis.index_space,
+            lambda e: axis.source_alid_sidecar.values(
+                rows,
+                lambda r: axis.alid_index.alids(r, expect_space=axis.index_space),
+                expect_space=e,
+            ),
+        ),
+        "SourceAlidSidecar.sourced": (
+            axis.index_space,
+            lambda e: axis.source_alid_sidecar.sourced(0, 2, expect_space=e),
+        ),
+        "SourceAlidSidecar.differing": (
+            axis.index_space,
+            lambda e: axis.source_alid_sidecar.differing(0, [None], ["1:1:A:C"], expect_space=e),
         ),
         "DenseRhoReader.row": (reader.index_space, lambda e: reader.row(0, expect_space=e)),
         "DenseRhoReader.pair": (reader.index_space, lambda e: reader.pair(0, 1, expect_space=e)),
@@ -313,6 +390,38 @@ def test_an_index_from_another_space_is_refused_and_its_own_is_read(
         call(_foreign(owner))
     assert "elsewhere" in str(refused.value)
     assert isinstance(refused.value, ValueError)
+
+
+@pytest.mark.parametrize("name", sorted(entry_points()))
+def test_an_index_with_no_space_named_is_refused(
+    points: dict[str, tuple[Any, Callable[[Any], Any]]], name: str
+) -> None:
+    """A default is no space: passing none is refused as an index from nowhere."""
+    _, call = points[name]
+    with pytest.raises(ReleaseMismatchError, match="no index space"):
+        call(None)
+
+
+def test_every_guarded_method_is_in_the_table_and_the_table_holds_no_other() -> None:
+    """The sweep's guarded methods are this file's behavioural table, exactly."""
+    from test_index_space_sweep import guarded_methods
+
+    swept = {".".join(name.split(".")[-2:]) for name in guarded_methods()}
+    assert sorted(swept - set(entry_points())) == []
+    assert sorted(set(entry_points()) - swept) == []
+
+
+def test_a_cached_panel_row_through_the_axiss_alid_index_is_refused_in_the_shared_space() -> None:
+    """Review round 3: `axis.alid_index.alids([200])` read a cached panel row as a shared one."""
+    with query("hybrid_completed") as q:
+        panel, shared = q._dense._variant_axis, q._variant_axis
+        rows = np.array([200])
+        with pytest.raises(ReleaseMismatchError):
+            shared.alid_index.alids(rows, expect_space=panel.index_space)
+        with pytest.raises(ReleaseMismatchError, match="no index space"):
+            panel.alid_index.alids(rows)
+        named = panel.alid_index.alids(rows, expect_space=panel.index_space)
+        assert named.tolist() == ["1:350000:A:G"]
 
 
 @pytest.mark.parametrize("name", ["VariantAxis.by_index", "DenseRhoReader.pair", "TopHitTier.read"])
