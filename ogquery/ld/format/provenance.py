@@ -8,7 +8,7 @@ each to its table, so neither can drift from the spec silently.
 
 from __future__ import annotations
 
-from typing import Final, Literal, TypedDict
+from typing import Final, Literal, NotRequired, TypedDict
 
 FORMAT_VERSION: Final = "0.2.0"
 
@@ -143,18 +143,44 @@ class PcDiagnostic(TypedDict):
     near_100kb_change: dict[str, float]
 
 
+class Ploidy(TypedDict):
+    """What a store holding X, Y or MT records of how it counted their allele copies
+    (`variant_filters.ploidy`, ld-store §7; ADR 0109, opengwasdb's).
+
+    `chromosomes` are the X, Y and MT it holds, in its order; `sex_source` says where the sexes
+    came from; `males` and `females` are the kept samples' counts (`females` is 0 for Y, and both
+    are None for an `ld_matrix` source whose producer publishes no split); `male_x_coding` is
+    `"0/2"`: a male's one X copy is written as a homozygote, so r from dosages needs no sex;
+    `x_pars_grch38` are GRCh38's two PARs, as [start, end] pairs; `mac_min_haploid` is the MAC
+    floor on Y and MT. An import also records `male_x_coding_evidence`, why its producer's X is
+    that coding.
+    """
+
+    chromosomes: list[str]
+    sex_source: str
+    males: int | None
+    females: int | None
+    male_x_coding: str
+    x_pars_grch38: list[list[int]]
+    mac_min_haploid: int
+    male_x_coding_evidence: NotRequired[str]
+
+
 class VariantFilters(TypedDict):
     """The build's variant filters and their values (`docs/spec/build-inputs.md` §6).
 
     `filter` lists the FILTER values that pass (`PASS` and `.`); `mac_min` is the minor
     allele count floor; `info_min` the INFO floor, None when none was applied (a sequenced
-    panel); `autosomes_only` that a record off chromosomes 1-22 was refused (ld-store §1).
+    panel). `autosomes_only` is true when the Variant Set is chromosomes 1-22 alone (ld-store
+    §1); a store holding X, Y or MT records it false, with `ploidy`, and an autosome store has no
+    `ploidy` (ADR 0109).
     """
 
     filter: list[str]
     mac_min: int
     info_min: float | None
     autosomes_only: bool
+    ploidy: NotRequired[Ploidy]
 
 
 class Counts(TypedDict):

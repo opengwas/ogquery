@@ -24,6 +24,8 @@ from ogquery.manifest import StoreManifest
 from ogquery.release import open_release
 from ogquery.top_hits import (
     CLUMPS_ATTRIBUTE_KEYS,
+    Y_ENTRY_KEYS,
+    Y_STORES,
     MalformedClumps,
     TierClumps,
     TopHitTier,
@@ -243,5 +245,52 @@ def test_a_member_of_the_wrong_kind_is_refused_by_name(
     root: zarr.Group, corrupt: Callable[[zarr.Group], Any], named: str
 ) -> None:
     tier = _tier(root, corrupt(root))
+    with pytest.raises(MalformedClumps, match=named):
+        tier.clumps(expect_space=tier.index_space)
+
+
+def _y_entry() -> dict[str, Any]:
+    """An `ld_stores_y` entry: an `ld_stores` entry's keys without the row counts (§18.1)."""
+    return {key: 1 for key in sorted(Y_ENTRY_KEYS)}
+
+
+def _with_y(value: Any) -> Callable[..., Any]:
+    return _attribute(lambda attrs: attrs["clumps"].update({Y_STORES: value}))
+
+
+def test_a_clumps_group_without_ld_stores_y_reads(root: zarr.Group) -> None:
+    tier = _tier(root)
+    clumps = tier.clumps(expect_space=tier.index_space)
+    assert clumps is not None
+    assert Y_STORES not in clumps.attribute
+
+
+@pytest.mark.parametrize("value", [{}, {"EUR": _y_entry(), "AFR": _y_entry()}],
+                         ids=["no-ancestry-has-one", "two-ancestries"])
+def test_a_clumps_group_with_ld_stores_y_reads_it_whole(root: zarr.Group, value: Any) -> None:
+    tier = _tier(root, _with_y(value)(root))
+    clumps = tier.clumps(expect_space=tier.index_space)
+    assert clumps is not None
+    assert clumps.attribute[Y_STORES] == value
+
+
+def _entry_without(key: str) -> dict[str, Any]:
+    entry = _y_entry()
+    del entry[key]
+    return entry
+
+
+@pytest.mark.parametrize(("value", "named"), [
+    (None, r"ld_stores_y is None, not an object"),
+    ([_y_entry()], r"ld_stores_y is \[.*\], not an object"),
+    ({"EUR": 1}, r"ld_stores_y\['EUR'\] is 1, not an object"),
+    ({"EUR": _entry_without("r_scale")}, r"ld_stores_y\['EUR'\] lacks \['r_scale'\]"),
+    ({"EUR": _entry_without("n") | {"extra": 1}, "AFR": _y_entry()},
+     r"ld_stores_y\['EUR'\] lacks \['n'\]"),
+], ids=["null", "array", "entry-not-object", "missing-key", "one-of-two"])
+def test_a_malformed_ld_stores_y_is_refused_by_name(
+    root: zarr.Group, value: Any, named: str
+) -> None:
+    tier = _tier(root, _with_y(value)(root))
     with pytest.raises(MalformedClumps, match=named):
         tier.clumps(expect_space=tier.index_space)

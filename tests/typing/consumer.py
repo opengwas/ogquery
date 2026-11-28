@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ogquery.facade import query_release
+from ogquery.ld.format import VariantFilters
 from ogquery.release import VariantTableReaderRequired, open_release
 
 
@@ -38,3 +39,22 @@ def ld_answers(location: str, alids: list[str]) -> tuple[int, int, bool]:
         held: ogquery.ld.Variants = store.variants_in("22", 1, 50_000_000)
         present = bool(store.has(alids).all())
         return int(matrix.r.shape[0]) + len(held), len(clumps.leads()), present
+
+
+def x_store_filters() -> VariantFilters:
+    """An X Store's `variant_filters`, as opengwasdb's builder writes it (ADR 0109; #519)."""
+    return {
+        "filter": ["PASS", "."],
+        "mac_min": 50,
+        "info_min": None,
+        "autosomes_only": False,
+        "ploidy": {
+            "chromosomes": ["X"],
+            "sex_source": "psam SEX (1 male, 2 female)",
+            "males": 300,
+            "females": 365,
+            "male_x_coding": "0/2",
+            "x_pars_grch38": [[10001, 2781479], [155701383, 156030895]],
+            "mac_min_haploid": 10,
+        },
+    }

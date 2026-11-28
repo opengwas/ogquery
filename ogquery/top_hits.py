@@ -167,6 +167,14 @@ CLUMPS_ENTRY_KEYS = frozenset({
     "reference_assembly", "n", "k", "t_far", "t_partner", "near_bp", "far_bp", "r_scale", "r2",
     "analyses", "rows_clumped", "rows_absent", "rows_ambiguous", "indel_rows_by_sorted_spelling",
 })
+#: The attribute's Y Stores, by ancestry (§18.1, ADR 0109): a known key, but optional, so not in
+#: `CLUMPS_ATTRIBUTE_KEYS`: a group without it still reads.
+Y_STORES = "ld_stores_y"
+#: An `ld_stores_y` entry's keys: an `ld_stores` entry's, without the row counts, which the
+#: ancestry's `ld_stores` entry holds for all its Analyses' rows, Y's among them (§18.1).
+Y_ENTRY_KEYS = CLUMPS_ENTRY_KEYS - {
+    "analyses", "rows_clumped", "rows_absent", "rows_ambiguous", "indel_rows_by_sorted_spelling",
+}
 
 
 class MalformedClumps(ValueError):
@@ -405,6 +413,24 @@ def clumps_attribute_problem(default: Any) -> str | None:
     missing = sorted(CLUMPS_ATTRIBUTE_KEYS - set(attribute))
     if missing:
         return f"{where}'s {CLUMPS_ATTRIBUTE!r} attribute lacks {missing}"
+    return y_stores_problem(attribute, where)
+
+
+def y_stores_problem(attribute: Mapping[str, Any], where: str) -> str | None:
+    """What is wrong with the attribute's `ld_stores_y`, if it holds one: an object of entries,
+    each an object with every key of `Y_ENTRY_KEYS` (§18.1, ADR 0109). The key is optional, so a
+    group without it reads; what its entries' values mean is validation's to judge."""
+    if Y_STORES not in attribute:
+        return None
+    stores = attribute[Y_STORES]
+    if not isinstance(stores, Mapping):
+        return f"{where}'s {Y_STORES} is {stores!r}, not an object"
+    for ancestry, entry in sorted(stores.items()):
+        if not isinstance(entry, Mapping):
+            return f"{where}'s {Y_STORES}[{ancestry!r}] is {entry!r}, not an object"
+        lacking = sorted(Y_ENTRY_KEYS - set(entry))
+        if lacking:
+            return f"{where}'s {Y_STORES}[{ancestry!r}] lacks {lacking}"
     return None
 
 
