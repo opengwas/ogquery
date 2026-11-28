@@ -32,6 +32,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from ogquery.guard import IndexSpace, SpaceBound
 from ogquery.npy_sidecar import (
     dtype_fault,
     holds_sidecar,
@@ -207,7 +208,7 @@ def write_position_sidecar(
         np.save(store / name, array)
 
 
-class PositionSidecar:
+class PositionSidecar(SpaceBound):
     """A release's position sidecar, memory-mapped: each row's position, each chromosome's rows."""
 
     FILENAMES: ClassVar[tuple[str, ...]] = POSITION_SIDECAR_FILENAMES
@@ -266,8 +267,12 @@ class PositionSidecar:
         last = int(np.searchsorted(block, POSITION_DTYPE.type(hi_value), side="right"))
         return np.arange(lo + first, lo + last, dtype=np.int64)
 
-    def chromosomes_of(self, rows: np.ndarray | Sequence[int]) -> list[str | None]:
-        """Each row's chromosome, as its slice names it; None for a row in no slice."""
+    def chromosomes_of(
+        self, rows: np.ndarray | Sequence[int], *, expect_space: IndexSpace | None = None
+    ) -> list[str | None]:
+        """Each row's chromosome, as its slice names it; None for a row in no slice.
+        `expect_space` is the rows', required once bound (`SpaceBound`)."""
+        self._require_bound(expect_space, "a variant row")
         rows = np.asarray(rows, dtype=np.int64)
         offsets = np.asarray(self.offsets, dtype=np.int64)
         labels = self.labels
@@ -275,10 +280,14 @@ class PositionSidecar:
         held = (at >= 0) & (at < len(labels)) & (rows < (offsets[-1] if offsets.size else 0))
         return [labels[k] if ok else None for k, ok in zip(at.tolist(), held.tolist(), strict=True)]
 
-    def placements(self, rows: np.ndarray | Sequence[int]) -> list[tuple[str | None, int | None]]:
-        """Each row's ``(chromosome, position)``; ``(None, None)`` past the sidecar's end."""
+    def placements(
+        self, rows: np.ndarray | Sequence[int], *, expect_space: IndexSpace | None = None
+    ) -> list[tuple[str | None, int | None]]:
+        """Each row's ``(chromosome, position)``; ``(None, None)`` past the sidecar's end.
+        `expect_space` is the rows', required once bound (`SpaceBound`)."""
+        self._require_bound(expect_space, "a variant row")
         rows = np.asarray(rows, dtype=np.int64)
-        chromosomes = self.chromosomes_of(rows)
+        chromosomes = self.chromosomes_of(rows, expect_space=self.index_space)
         held = rows[rows < self.n_rows]
         positions = dict(zip(held.tolist(), np.asarray(self.positions[held]).tolist(), strict=True))
         return [
@@ -287,7 +296,12 @@ class PositionSidecar:
         ]
 
     def misplaced(
-        self, start: int, chromosomes: Sequence[str], positions: Sequence[int]
+        self,
+        start: int,
+        chromosomes: Sequence[str],
+        positions: Sequence[int],
+        *,
+        expect_space: IndexSpace | None = None,
     ) -> list[int]:
         """The rows from `start`, one per given chromosome and position, that this
         sidecar places elsewhere, ascending.
@@ -295,11 +309,13 @@ class PositionSidecar:
         The one comparison of the sidecar against the Variant Table: the rewrite's
         read-back and the validator's `variant_table.position_sidecar` both make it.
         A row past the sidecar's end is not compared; `n_rows` says the sidecar is short.
+        `start` is a row, so `expect_space` is required once bound (`SpaceBound`).
         """
+        self._require_bound(expect_space, "a variant row")
         held = max(min(start + len(chromosomes), self.n_rows) - start, 0)
         stored = np.asarray(self.positions[start : start + held], dtype=np.int64)
         given = np.asarray(positions[:held], dtype=np.int64)
-        named = self.chromosomes_of(np.arange(start, start + held))
+        named = self.chromosomes_of(np.arange(start, start + held), expect_space=self.index_space)
         return [
             start + k
             for k in range(held)

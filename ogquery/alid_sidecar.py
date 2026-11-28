@@ -33,6 +33,7 @@ from typing import ClassVar
 
 import numpy as np
 
+from ogquery.guard import IndexSpace, SpaceBound
 from ogquery.npy_sidecar import (
     encode_utf8_offsets,
     offsets_fault,
@@ -155,7 +156,7 @@ def write_alid_sidecar(store_path: str | Path, alids: Sequence[str]) -> None:
         np.save(store / name, array)
 
 
-class AlidSidecar:
+class AlidSidecar(SpaceBound):
     """A release's ALID sidecar, memory-mapped: each row's ALID, and each ALID's row.
 
     One of the two ALID indexes a Variant Axis opens (`ogquery.alid_index`);
@@ -187,14 +188,17 @@ class AlidSidecar:
     def n_rows(self) -> int:
         return len(self.offsets) - 1
 
-    def alid(self, row: int) -> str:
-        """Row `row`'s ALID."""
+    def alid(self, row: int, *, expect_space: IndexSpace | None = None) -> str:
+        """Row `row`'s ALID; `expect_space` is the row's, required once bound (`SpaceBound`)."""
+        self._require_bound(expect_space, "a variant row")
         start, stop = int(self.offsets[row]), int(self.offsets[row + 1])
         return str(self._text[start:stop], "utf-8")
 
-    def alids(self, rows: np.ndarray) -> np.ndarray:
+    def alids(self, rows: np.ndarray, *, expect_space: IndexSpace | None = None) -> np.ndarray:
         """The ALIDs of `rows`, as an object array in `rows`' order; None for a row past
-        the sidecar's end, which names no ALID there."""
+        the sidecar's end, which names no ALID there. `expect_space` is the rows', required
+        once bound (`SpaceBound`)."""
+        self._require_bound(expect_space, "a variant row")
         rows = np.asarray(rows, dtype=np.int64)
         out = np.full(rows.size, None, dtype=object)
         held = np.flatnonzero((rows >= 0) & (rows < self.n_rows))
@@ -313,9 +317,10 @@ def _wrong_keys(sidecar: AlidSidecar, order: np.ndarray) -> Iterator[str]:
         wrong = np.flatnonzero(np.asarray(keys[start : start + _WINDOW]) != expected)
         if wrong.size:
             row = int(rows[wrong[0]])
+            alid = sidecar.alid(row, expect_space=sidecar.index_space)
             yield (
                 f"variant_alid_keys.npy holds a key for row {row} that is not the start of "
-                f"its ALID {sidecar.alid(row)!r} ({wrong.size} such key(s) in rows "
+                f"its ALID {alid!r} ({wrong.size} such key(s) in rows "
                 f"{start}..{start + len(rows) - 1})"
             )
 

@@ -12,6 +12,9 @@ from __future__ import annotations
 import numpy as np
 import zarr
 
+from ogquery.guard import ANALYSIS, IndexSpace, ReleaseIdentity, require_space
+from ogquery.manifest import group_identity
+
 #: The attribute of a Hybrid Dense Component's `rho` group listing, by `analysis_index`
 #: ascending, its Overflow-only Analyses (#496). A standalone Dense release's carries none.
 OVERFLOW_ONLY_ATTR = "overflow_only"
@@ -83,7 +86,12 @@ class DenseRhoReader:
     "Known Limitation"), so they -- and the reconstructed full matrix, once
     asked for -- are held in memory rather than re-read per query."""
 
-    def __init__(self, group: zarr.Group, n_analyses: int):
+    def __init__(
+        self, group: zarr.Group, n_analyses: int, *, identity: ReleaseIdentity | None = None
+    ):
+        #: The release this matrix belongs to: its indices are scoped to it (`ogquery.guard`).
+        #: Learned from the release's manifest; `identity=` only where none is reachable.
+        self.index_space = IndexSpace(group_identity(group, explicit=identity), ANALYSIS)
         self.group = group
         self.n_analyses = n_analyses
         self._packed_rho, self._packed_n_null = packed_rho(group)
@@ -112,21 +120,28 @@ class DenseRhoReader:
         self._full_rho = full_rho
         self._full_n_null = full_n_null
 
-    def pair(self, i: int, j: int) -> tuple[float, int]:
+    def pair(self, i: int, j: int, *, expect_space: IndexSpace) -> tuple[float, int]:
         """Rho and support between analysis indices ``i`` and ``j``."""
+        require_space(self.index_space, expect_space, "an analysis index")
         self._ensure_full()
         assert self._full_rho is not None and self._full_n_null is not None
         return float(self._full_rho[i, j]), int(self._full_n_null[i, j])
 
-    def row(self, i: int) -> tuple[np.ndarray, np.ndarray]:
+    def row(self, i: int, *, expect_space: IndexSpace) -> tuple[np.ndarray, np.ndarray]:
         """Rho and support of analysis index ``i`` against every analysis
         (including itself: rho=1.0, n_null=0 at the diagonal)."""
+        require_space(self.index_space, expect_space, "an analysis index")
         self._ensure_full()
         assert self._full_rho is not None and self._full_n_null is not None
         return self._full_rho[i, :].copy(), self._full_n_null[i, :].copy()
 
-    def matrix(self, indices: list[int] | None = None) -> tuple[np.ndarray, np.ndarray]:
+    def matrix(
+        self, indices: list[int] | None = None,
+        *,
+        expect_space: IndexSpace,
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Full symmetric matrix, or the dense submatrix for ``indices``."""
+        require_space(self.index_space, expect_space, "an analysis index")
         self._ensure_full()
         assert self._full_rho is not None and self._full_n_null is not None
         if indices is None:

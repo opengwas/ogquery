@@ -43,6 +43,7 @@ from ogquery.encoding.codec import (
 from ogquery.encoding.plan import StoreEncoding, UnsupportedEncoding
 from ogquery.enums import CompletionState, PrimaryStorageLayout
 from ogquery.format import zarr_format_for_version
+from ogquery.guard import CellSpaces, IndexSpace, ReleaseIdentity, require_space
 from ogquery.hybrid import dense_component_path
 from ogquery.layout import (
     INDEXED_SUBSET_CHUNK,
@@ -50,7 +51,7 @@ from ogquery.layout import (
     chunk_layout,
     shard_layout,
 )
-from ogquery.manifest import StoreManifest
+from ogquery.manifest import StoreManifest, data_spaces
 from ogquery.release import open_release
 from ogquery.stored import eaf_baseline, se_coefficients
 
@@ -235,14 +236,34 @@ class IndexedSubset:
     n_z_overflow: int
     n_eaf_exceptions: int
     n_se_exceptions: int
+    #: What its cells are numbered in, learned from the Dense release it sits in
+    #: (`manifest.data_spaces`): that release's Analyses and variant rows, or, in a Hybrid's
+    #: Dense Component, the Hybrid's Analyses and panel rows. Its recorded source names the
+    #: component's own Store, which opening it checked; its indices are the Hybrid's.
+    spaces: CellSpaces = field(repr=False, compare=False)
     _group: Any = field(repr=False, compare=False)
 
-    def decode_analysis(self, analysis_index: int) -> IndexedSubsetAnalysis:
+    @property
+    def identity(self) -> ReleaseIdentity:
+        """The Store and release its indices are scoped to (`spaces`)."""
+        return self.spaces.analysis.identity
+
+    @property
+    def index_space(self) -> IndexSpace:
+        """What its `analysis_index` argument numbers: its release's Analyses."""
+        return self.spaces.analysis
+
+    def decode_analysis(
+        self, analysis_index: int,
+        *,
+        expect_space: IndexSpace,
+    ) -> IndexedSubsetAnalysis:
         """Decode one Analysis's Z, SE and (when present) EAF columns.
 
         This is the read seam #265 builds the query fast path on: the returned
         values are what the primary planes decode to at the same variants.
         """
+        require_space(self.index_space, expect_space, "an analysis index")
         if not 0 <= analysis_index < self.n_analyses:
             raise IndexedSubsetError(
                 f"store {self.store_path}: Indexed Variant Subset {self.name!r}: "
@@ -889,6 +910,7 @@ def _open_indexed_subset(store_path: Path, subset_name: str) -> IndexedSubset:
         n_z_overflow=_side_table_length(group, Z_OVERFLOW_INDEX),
         n_eaf_exceptions=_side_table_length(group, EAF_EXCEPTION_INDEX),
         n_se_exceptions=_side_table_length(group, _SE_EXCEPTION_INDEX),
+        spaces=data_spaces(store_path),
         _group=group,
     )
 

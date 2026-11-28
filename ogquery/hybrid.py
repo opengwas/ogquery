@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -74,7 +75,20 @@ def hybrid_root_of(component_path: str | Path) -> Path | None:
     place says what it is. A parent `manifest.json` that exists but cannot be read is
     refused (`UnreadableHybridManifest`), never read as "not a Hybrid": that would open
     a 0.3.0 Dense Component as a standalone Dense release, missing every index.
+
+    The path is taken as given. `ogquery.manifest.release_scope_of`, which every reader
+    learns its index space from, asks this same question (`hybrid_manifest_of`) of the
+    real path, and also requires the Hybrid to be of the component's own release.
     """
+    found = hybrid_manifest_of(component_path)
+    return None if found is None else found[0]
+
+
+def hybrid_manifest_of(component_path: str | Path) -> tuple[Path, dict[str, Any]] | None:
+    """The Hybrid that nests `component_path` as its Dense Component and that Hybrid's
+    manifest, read once, as JSON; None when it is not one. The one structural test of a
+    Dense Component (`hybrid_root_of`): a `dense/` directory under a `manifest.json` whose
+    `primary_layout` is `hybrid`. An unreadable parent manifest is refused."""
     path = Path(component_path)
     if path.name != DENSE_SUBDIR:
         return None
@@ -93,7 +107,7 @@ def hybrid_root_of(component_path: str | Path) -> Path | None:
             f"{manifest}: the manifest of the release {path} would be the Dense Component "
             f"of is not a JSON object"
         )
-    return path.parent if recorded.get("primary_layout") == "hybrid" else None
+    return (path.parent, recorded) if recorded.get("primary_layout") == "hybrid" else None
 
 
 def shared_axis_root(component_path: str | Path, format_version: str) -> Path | None:

@@ -16,6 +16,9 @@ from collections.abc import ItemsView, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from ogquery.guard import ANALYSIS, IndexSpace, ReleaseIdentity, ReleaseIdUnknown
+from ogquery.manifest import release_identity, release_scope_of
+
 
 class UnknownAnalysisError(ValueError):
     """A query named an `analysis_id` the Store Release does not hold.
@@ -81,6 +84,22 @@ def analysis_label(row: Mapping[str, str]) -> str:
     return row.get("analysis_label") or row.get("analysis_id", "")
 
 
+def _require_own_table(store_path: Path, table: Path) -> None:
+    """A `table=` is stamped with `store_path`'s identity, so it must be the table that
+    release numbers its Analyses by (`ReleaseScope.analyses_path`: its own, or a Dense
+    Component's Hybrid's), by real path. Any other would number them under a stamp it does
+    not hold. Where `store_path` has no manifest there is no identity to stamp: the index
+    then refuses unless it is given one (`index_space`)."""
+    if not (store_path / "manifest.json").is_file():
+        return
+    own = release_scope_of(store_path).analyses_path
+    if table.resolve() != own.resolve():
+        raise ReleaseIdUnknown(
+            f"{table} is not the analyses.tsv the release at {store_path} numbers its Analyses "
+            f"by ({own}): its rows would be stamped with that release's identity"
+        )
+
+
 class AnalysesIndex:
     """`analyses.tsv` read once, keyed by `analysis_id` and by `analysis_index`.
 
@@ -89,14 +108,34 @@ class AnalysesIndex:
     `StoreRelease.analyses_path`, #472).
     """
 
-    def __init__(self, store_path: str | Path, *, table: str | Path | None = None):
+    def __init__(
+        self,
+        store_path: str | Path,
+        *,
+        table: str | Path | None = None,
+        identity: ReleaseIdentity | None = None,
+    ):
+        self._store_path = Path(store_path)
+        self._identity = identity
+        self._index_space: IndexSpace | None = None
         path = Path(table) if table is not None else Path(store_path) / "analyses.tsv"
+        if table is not None:
+            _require_own_table(self._store_path, path)
         rows = read_analyses(path).rows
         self._by_id: dict[str, dict[str, str]] = {}
         self._by_index: dict[int, dict[str, str]] = {}
         for row in rows:
             self._by_id[row["analysis_id"]] = row
             self._by_index[int(row["analysis_index"])] = row
+
+    @property
+    def index_space(self) -> IndexSpace:
+        """What `analysis_index` numbers: this release's Analyses (`ogquery.guard`), learned
+        from its manifest on first use, and refused where there is none to learn it from."""
+        if self._index_space is None:
+            found = release_identity(self._store_path, explicit=self._identity)
+            self._index_space = IndexSpace(found, ANALYSIS)
+        return self._index_space
 
     def by_id(self, analysis_id: str) -> dict[str, str] | None:
         return self._by_id.get(analysis_id)
