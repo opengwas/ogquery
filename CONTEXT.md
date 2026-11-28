@@ -74,6 +74,15 @@ byte-identical sequence. Its `digest()` is computed from the bytes; the sidecar'
 `verify()` compares against.
 _Avoid_: reference FASTA (the FASTA is its recorded source, read by the engine), 2-bit genome.
 
+**CPRA Status**:
+What `ogquery.cpra.to_cpra` says of a variant it was asked to spell: `ok`, with its CPRA
+(opengwasdb ADR 0108's key, `chrom:pos:REF:ALT`), or why it has none: `ref_mismatch` (a
+declared reference the genome does not carry), `allele_not_reference` (neither allele is the
+genome's; never complemented), `indel_unresolved` (an indel whose source declares no
+reference) or `off_sequence` (an `N`, or a span leaving its contig). The same five as
+opengwasdb #518's alignment tool, which adds `lift_failed` for its own lift. Malformed input
+(an empty or non-ACGT allele, two alleles alike) is a caller's bug and raises instead.
+
 **Clean Install**:
 A fresh virtual environment into which `pip install ogquery` was run with source builds
 refused: it must hold ogquery, numpy, zarr, numcodecs and their own dependencies, and

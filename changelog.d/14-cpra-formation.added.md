@@ -19,3 +19,17 @@
   `ReferenceSequence` (`fetch`, `digest`), and `bases(chrom, positions)` gathers the base at
   millions of 1-based positions at once. `digest()` is computed from the bytes, never read from
   the sidecar, and `verify()` compares the two.
+- **`ogquery.cpra.to_cpra` forms one variant's CPRA, `chrom:pos:REF:ALT` on GRCh38, or says
+  why it cannot (opengwas/ogquery#14, opengwasdb ADR 0108 §2-§5).** From a chromosome, a
+  1-based position, two alleles and optionally which one the source declares as the reference,
+  it returns a frozen `CpraResult` (`cpra`, `chrom`, `pos`, `ref`, `alt`, `a1_is_alt`, `status`).
+  REF is the genome's: a declared REF is checked whole, an undeclared equal-length substitution
+  is trimmed first, and a declared indel is left-shifted as `bcftools norm -f` does. A row it
+  cannot spell gets a `CpraStatus` and no CPRA: `ref_mismatch`, `allele_not_reference` (never
+  complemented), `indel_unresolved` (an undeclared indel) or `off_sequence` (an `N`, before
+  position 1, or off the contig). Malformed alleles and a contig the sequence does not hold
+  raise, and so does a `ReferenceSequence` that answers short (`ShortReferenceRead`). Checked
+  against `bcftools norm -f -m-any -c e` (1.24) on GRCh38: all 3,373,064 indels of OGS-00004
+  agree, the 1,074 bcftools respells among them; on OGS-00011's 6,395 multi-base
+  substitutions, each declared both ways, `to_cpra`'s 8,393 `ref_mismatch` rows are exactly
+  bcftools' `REF_MISMATCH` rows.

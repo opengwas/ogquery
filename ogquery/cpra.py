@@ -13,6 +13,12 @@ base before it equals its moved sequence's last base, keeping VCF's padding base
 share no first base once trimmed, is trimmed and not shifted. At a contig's first
 base nothing lies to the left, so the first base stays the anchor.
 
+`to_cpra` forms one variant's CPRA, `chrom:pos:REF:ALT`, from its chromosome, position
+and two alleles, by ADR 0108's rules: REF is the genome's (§3), an equal-length
+substitution is trimmed first (§2), an indel is left-shifted from its declared reference
+(§2), and a row it cannot spell gets a `CpraStatus` and no CPRA: it never guesses, and
+never complements (§4, §5).
+
 The sequence comes through `ReferenceSequence`, which `ogquery.genome.ByteGenome`
 implements over the memory-mapped byte genome, and opengwasdb's `FastaSequence` over an
 indexed FASTA. The protocol, the normal form and its errors moved here unchanged from
@@ -21,9 +27,17 @@ opengwasdb `0ba413e7` (`opengwasdb/variants/left_align.py`, #479).
 
 from __future__ import annotations
 
-from typing import Protocol
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Literal, Protocol
 
-from ogquery.identity import VALID_BASES, InvalidAllele
+from ogquery.identity import (
+    VALID_BASES,
+    InvalidAllele,
+    VariantNormalisationError,
+    normalise_allele,
+    normalise_chromosome,
+)
 
 #: How many bases a left shift reads at a time: one fetch covers every repeat the
 #: #479 measurement met (none moved an indel further than 1,999 bases), in a few reads.
@@ -51,6 +65,11 @@ class PositionOutsideContig(ValueError):
 
 class UnreadableReferenceBase(ValueError):
     """A shift reached a base that is not A, C, G or T (an `N`), which no ALID can spell."""
+
+
+class ShortReferenceRead(ValueError):
+    """A `ReferenceSequence` answered a span with a different number of bases than it was
+    asked for: the sequence is broken, and nothing it says can be judged."""
 
 
 class ReferenceSequence(Protocol):
@@ -150,3 +169,136 @@ class _LeftBases:
                 f"{self._chrom}:{pos}: a left shift reached {base!r}, which no ALID can spell"
             )
         return base
+
+
+class CpraStatus(StrEnum):
+    """Whether `to_cpra` formed a CPRA, and if not, why (opengwasdb #518's statuses)."""
+
+    #: Formed: the CPRA's REF is the genome's.
+    OK = "ok"
+    #: The declared reference is not what the genome carries (ADR 0108 §3).
+    REF_MISMATCH = "ref_mismatch"
+    #: Neither allele is the genome's, so the row is dropped, never complemented (§4).
+    ALLELE_NOT_REFERENCE = "allele_not_reference"
+    #: An indel whose source declares no reference, which stays dropped (§5, ruling 3).
+    INDEL_UNRESOLVED = "indel_unresolved"
+    #: The span holds a base that is not A, C, G or T (a gap, `N`), or leaves its contig.
+    OFF_SEQUENCE = "off_sequence"
+
+
+@dataclass(frozen=True, slots=True)
+class CpraResult:
+    """One variant's CPRA, or the status saying why it has none.
+
+    On `CpraStatus.OK` every field is set: ``cpra`` is ``chrom:pos:REF:ALT``, and
+    ``a1_is_alt`` says whether the caller's ``a1`` (its effect allele, where it has one;
+    #518's ``effect_is_alt``) is ALT, so its statistics are signed for ALT as they stand.
+    On any other status every field but ``status`` is None.
+    """
+
+    status: CpraStatus
+    cpra: str | None
+    chrom: str | None
+    pos: int | None
+    ref: str | None
+    alt: str | None
+    a1_is_alt: bool | None
+
+
+def to_cpra(
+    chrom: str,
+    pos: int,
+    a1: str,
+    a2: str,
+    *,
+    sequence: ReferenceSequence,
+    declared_ref: Literal["a1", "a2"] | None = None,
+) -> CpraResult:
+    """The CPRA of the variant ``chrom:pos`` with alleles ``a1`` and ``a2`` on ``sequence``.
+
+    ``pos`` is 1-based on the sequence's assembly (GRCh38). ``declared_ref`` names the
+    allele the source declares as the reference (a GWAS-VCF's REF, a harmonised
+    GWAS-SSF's), or is None where it declares none. The rules are opengwasdb ADR 0108's:
+
+    - Alleles are spelt as an identity is (`normalise_allele`) and the chromosome by its
+      canonical label (`normalise_chromosome`). An empty allele, a base other than A, C, G
+      or T, or two alleles spelt alike raise the `ogquery.identity` errors: they are the
+      caller's bug, not a status. So does a contig ``sequence`` does not hold
+      (`ContigNotHeld`).
+    - A position before 1 is `OFF_SEQUENCE`, judged before any trim could move the
+      variant onto the contig. The genome's span is read at the position: one holding a
+      base other than A, C, G or T, or leaving the contig, is `OFF_SEQUENCE`. A sequence
+      that answers with more or fewer bases than asked is broken, and raises
+      `ShortReferenceRead`.
+    - **Alleles of one length, with a declared reference:** the whole declared allele is
+      compared with the genome's span, `REF_MISMATCH` where they differ (§3: nothing is
+      kept unchecked), and then the pair is trimmed (`trim_alleles`, §2).
+    - **Alleles of one length, without one:** the pair is trimmed first (§2, ruling 9), the
+      span at the trimmed position read, and the allele equal to it is REF. Where neither
+      is, the row is `ALLELE_NOT_REFERENCE`; a complement is never tried (§4, ruling 8).
+    - **An indel** without a declared reference is `INDEL_UNRESOLVED` (§5, ruling 3),
+      wherever it lies: the genome is not asked to orient it. With one, the declared span
+      is read as above for `OFF_SEQUENCE`, and `normalise_indel` checks the declared
+      reference (`REF_MISMATCH`), trims it and shifts it left; a shift that reaches a gap
+      is `OFF_SEQUENCE`.
+    """
+    chrom = normalise_chromosome(chrom)
+    a1, a2 = normalise_allele(a1), normalise_allele(a2)
+    if a1 == a2:
+        raise VariantNormalisationError("effect and other alleles are identical")
+    if declared_ref not in (None, "a1", "a2"):
+        raise ValueError(f"declared_ref is {declared_ref!r}: name 'a1', 'a2' or None")
+    if len(a1) != len(a2) and declared_ref is None:
+        return _NO_CPRA[CpraStatus.INDEL_UNRESOLVED]
+    if pos < 1:
+        return _NO_CPRA[CpraStatus.OFF_SEQUENCE]
+    if declared_ref is None:
+        start, first, second = trim_alleles(pos, a1, a2)
+        carried = _span(sequence, chrom, start, len(first))
+        if carried is None:
+            return _NO_CPRA[CpraStatus.OFF_SEQUENCE]
+        if carried == first:
+            return _formed(chrom, start, first, second, a1_is_alt=False)
+        if carried == second:
+            return _formed(chrom, start, second, first, a1_is_alt=True)
+        return _NO_CPRA[CpraStatus.ALLELE_NOT_REFERENCE]
+    a1_is_alt = declared_ref == "a2"
+    ref, alt = (a2, a1) if a1_is_alt else (a1, a2)
+    carried = _span(sequence, chrom, pos, len(ref))
+    if carried is None:
+        return _NO_CPRA[CpraStatus.OFF_SEQUENCE]
+    if len(ref) == len(alt):
+        if carried != ref:
+            return _NO_CPRA[CpraStatus.REF_MISMATCH]
+        pos, ref, alt = trim_alleles(pos, ref, alt)
+    else:
+        try:
+            pos, ref, alt = normalise_indel(chrom, pos, ref, alt, sequence=sequence)
+        except ReferenceAlleleMismatch:
+            return _NO_CPRA[CpraStatus.REF_MISMATCH]
+        except UnreadableReferenceBase:
+            return _NO_CPRA[CpraStatus.OFF_SEQUENCE]
+    return _formed(chrom, pos, ref, alt, a1_is_alt=a1_is_alt)
+
+
+_NO_CPRA = {status: CpraResult(status, None, None, None, None, None, None) for status in CpraStatus}
+
+
+def _formed(chrom: str, pos: int, ref: str, alt: str, *, a1_is_alt: bool) -> CpraResult:
+    return CpraResult(CpraStatus.OK, f"{chrom}:{pos}:{ref}:{alt}", chrom, pos, ref, alt, a1_is_alt)
+
+
+def _span(sequence: ReferenceSequence, chrom: str, pos: int, length: int) -> str | None:
+    """The genome's bases at the 1-based ``pos`` (at least 1) for ``length`` bases, or None
+    where the span leaves the contig or holds a base other than A, C, G or T. A sequence
+    that answers with another number of bases raises `ShortReferenceRead`."""
+    try:
+        carried = sequence.fetch(chrom, pos - 1, pos - 1 + length)
+    except PositionOutsideContig:
+        return None
+    if len(carried) != length:
+        raise ShortReferenceRead(
+            f"{chrom}:{pos}: the reference sequence answered {carried!r}, {len(carried)} "
+            f"bases, when {length} were asked for; it is broken"
+        )
+    return carried if set(carried) <= VALID_BASES else None

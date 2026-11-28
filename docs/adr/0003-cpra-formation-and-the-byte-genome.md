@@ -111,6 +111,47 @@ reference (a build's manifest) records `digest()`.
 **What stays in the engine.** Reading a FASTA (pysam) and deriving the file, and the canonical
 install under `/data/opengwasdb/reference/` with its provenance, are opengwasdb's lane.
 
+### CPRA formation (`ogquery.cpra`)
+
+**The normal form moved here unchanged.** `ReferenceSequence`, `trim_alleles`,
+`normalise_indel` and their errors are opengwasdb `0ba413e7`'s
+`opengwasdb/variants/left_align.py`, byte for byte but for the import of `ogquery.identity`
+and the module docstring; its tests came with it, and run against both an in-memory sequence
+and a byte genome.
+
+**`to_cpra(chrom, pos, a1, a2, *, sequence, declared_ref=None)`** follows ADR 0108 §2-§5 and
+returns a frozen `CpraResult` (`status`, `cpra`, `chrom`, `pos`, `ref`, `alt`, `a1_is_alt`;
+#518's `effect_is_alt` where `a1` is the effect allele). On a status other than `ok` every
+other field is None. Where ADR 0108 left a choice open, it takes these (accepted by the
+orchestrator in review, 28 Nov 2026):
+
+- **A contig the sequence does not hold raises `ContigNotHeld`**, as malformed alleles raise
+  the `identity` errors: a CPRA exists only on the primary assembly, so a caller filters
+  other contigs first (`is_primary_contig`), and a byte genome missing a primary contig is
+  the wrong file. It is not a status.
+- **A position before 1 is `off_sequence`**, as one past a contig's end is. It is judged
+  before any trim, so `AG/AA` at position 0 never becomes `G/A` at 1.
+- **A declared indel whose REF span holds an `N` is `off_sequence`**, not `ref_mismatch`, as
+  an SNV at an `N` is: the span is read and judged before the declared REF is compared, in
+  both paths. A left shift that reaches an `N` (`UnreadableReferenceBase`) is `off_sequence`
+  too.
+- **An undeclared indel is `indel_unresolved` before the genome is read**, wherever it lies.
+- **A declared equal-length substitution is checked whole, then trimmed.** ADR 0108 §3
+  drops a declared REF the genome does not carry and keeps nothing unchecked, so the whole
+  declared allele is compared with the genome's span: `CC/TC` declaring `CC` where the
+  genome reads `CA` is `ref_mismatch`, as `bcftools norm -c e` reports it, not the `C:T`
+  its trimmed REF would match. An **undeclared** one is trimmed first (ruling 9;
+  `trim_alleles` is symmetric in its alleles) and then oriented by the genome's span at the
+  trimmed position, so `CC/TC` at a genome `CA` is `C:T` (ruled in review, 28 Nov 2026). A
+  multi-base substitution that stays one is formed like an SNV, REF being the genome's span.
+- **A declared indel's REF has one owner**, `normalise_indel`, whose
+  `ReferenceAlleleMismatch` `to_cpra` reports as `ref_mismatch`; `to_cpra` reads the span
+  first only to judge `off_sequence`.
+- **A sequence that answers with another number of bases than asked raises
+  `ShortReferenceRead`**: a broken `ReferenceSequence` is not a mismatch.
+- `declared_ref` names `"a1"` or `"a2"`, not an allele string, so a caller cannot name an
+  allele that is neither.
+
 ### Measured on GRCh38
 
 Measured on 28 Nov 2026 (a verification, not a test; the scripts and their output are under
@@ -125,6 +166,11 @@ the orchestration run's `scratch/ogq14/`, not in this repository):
   4.5 s; `verify()` passes.
 - **Read against pysam** (0.24) on the same FASTA: 10,000 seeded random positions per contig
   (`bases`) and 1,000 spans of 1-200 bases per contig (`fetch`), 275,000 reads and 2.77 M bases in all: no disagreement.
+- **`to_cpra` against `bcftools norm -f <FASTA> -m-any -c e`** (1.24), on every indel of
+  OGS-00004 (3,373,064, reference-first, declared REF): all 3,373,064 agree, the 1,074 that
+  bcftools respells among them, and so does the 10,000-row sample of those 1,074 plus seeded
+  random others. None was `ref_mismatch` or `off_sequence`. `to_cpra` took 7.5 µs an indel
+  in Python on a host at load 100.
 - **`bases()` on 1 M random SNV sites**, warm, in 25 per-contig gathers: 12.1 ns a site
   sorted and 10.8 ns unsorted (median of five), within ADR 0108's 13-19 ns.
 
