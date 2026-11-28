@@ -87,6 +87,11 @@ _SELECTOR = (
 _OWN = "positions within this record itself, not a release's index"
 _GENOMIC = "a genomic position on a chromosome, which a splice does not renumber"
 _SLOT = "a slot of the sidecar's sorted keys, which only its own search returns"
+_REFERENCE = (
+    "a coordinate in the reference sequence itself (the byte genome, opengwas/ogquery#14), "
+    "on a chromosome: no Store Release's index, which a splice does not renumber, and "
+    "bounded by its contig (`PositionOutsideContig`)"
+)
 
 #: Each method that takes an index-bearing value and no space, and why that is safe.
 EXEMPT: dict[str, str] = {
@@ -145,6 +150,8 @@ EXEMPT: dict[str, str] = {
     "ogquery.facade.RaggedStoreQuery.range_phewas": _GENOMIC,
     "ogquery.facade.StoreQuery.range_phewas": _GENOMIC,
     "ogquery.facade._StoreQueryBase.variants_in_range": _GENOMIC,
+    "ogquery.genome.ByteGenome.bases": _REFERENCE,
+    "ogquery.genome.ByteGenome.fetch": _REFERENCE,
     "ogquery.panel_axis.PanelVariantAxis.range": _GENOMIC,
     "ogquery.panel_axis.PanelVariantAxis.range_indices": _GENOMIC,
     "ogquery.panel_axis.PanelVariantAxis.tabix_range": _GENOMIC,
