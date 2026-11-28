@@ -23,15 +23,13 @@ from ogquery.encoding.codec import (
 from ogquery.encoding.plan import StoreEncoding
 from ogquery.encoding.planes import EafRead, RaggedEafPlane, RaggedSePlane
 from ogquery.guard import (
-    ANALYSIS,
-    VARIANT,
     CellSpaces,
     IndexSpace,
     ReleaseIdentity,
     require_cells,
     require_space,
 )
-from ogquery.manifest import StoreManifest, release_identity
+from ogquery.manifest import StoreManifest, data_spaces
 
 RAGGED_ZARR_PATH = "data.zarr/ragged"
 
@@ -62,9 +60,9 @@ class RaggedCSRReader:
         identity: ReleaseIdentity | None = None,
     ):
         #: The numbering of this sequence's cells: its release's variant axis and Analyses,
-        #: learned from the release's manifest (`identity=` only where none is reachable).
-        found = release_identity(store_path, explicit=identity)
-        self.spaces = CellSpaces(IndexSpace(found, VARIANT), IndexSpace(found, ANALYSIS))
+        #: learned from the release's manifest, which must describe the `data.zarr` read
+        #: (`manifest.data_spaces`; `identity=` only where no manifest is reachable).
+        self.spaces = data_spaces(store_path, explicit=identity)
         path = Path(store_path) / RAGGED_ZARR_PATH
         self._root = store_arrays.open_group(path)
         self._offsets: zarr.Array = self._root["offsets"]
@@ -187,9 +185,13 @@ class RaggedCSRReader:
         *,
         eaf: np.ndarray | None = None,
         analysis_index: int | None = None,
+        expect_space: IndexSpace | None = None,
     ) -> np.ndarray:
         """Decoded `se[start:end]`; callers may supply a pre-read frequency
-        block and a known Analysis (#253)."""
+        block and a known Analysis (#253). The Analysis selects its SE coefficients, so
+        it is read only in the space it came from (`expect_space`, required with one)."""
+        if analysis_index is not None:
+            require_space(self.spaces.analysis, expect_space, "an analysis index")
         return self._se_plane.slice(start, end, analysis_index=analysis_index, eaf=eaf)
 
     def se_at(self, positions: np.ndarray, *, eaf: np.ndarray | None = None) -> np.ndarray:

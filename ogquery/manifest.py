@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from ogquery.encoding.plan import StoreEncoding, UnsupportedEncoding
 from ogquery.enums import (
     AssociationCoverage,
@@ -19,7 +21,17 @@ from ogquery.enums import (
     PrimaryStorageLayout,
 )
 from ogquery.format import check_format_version
-from ogquery.guard import ReleaseIdentity, ReleaseIdUnknown, identifier
+from ogquery.guard import (
+    ANALYSIS,
+    PANEL,
+    VARIANT,
+    CellSpaces,
+    IndexSpace,
+    ReleaseIdentity,
+    ReleaseIdUnknown,
+    identifier,
+)
+from ogquery.hybrid import DENSE_TO_SHARED_FILENAME, UnreadableHybridManifest, hybrid_manifest_of
 
 
 def _encoding_from_dict(data: dict[str, Any]) -> StoreEncoding:
@@ -164,97 +176,307 @@ class StoreManifest:
         return data
 
 
-def release_identity(
-    directory: str | Path, *, explicit: ReleaseIdentity | None = None
-) -> ReleaseIdentity:
-    """The identity of the release in `directory`, from its `manifest.json`: the one parser
-    (`StoreManifest`). An `explicit` identity is accepted only where no manifest is there,
-    and refused where one is and says otherwise. With neither, the reader refuses."""
-    directory = Path(directory).resolve()
-    manifest_path = directory / "manifest.json"
-    if not manifest_path.is_file():
-        if explicit is None:
-            raise ReleaseIdUnknown(
-                f"cannot learn which release {str(directory)!r} is: it has no manifest.json; "
-                "pass identity= where no manifest is reachable"
-            )
-        return explicit
+@dataclass(frozen=True)
+class ReleaseScope:
+    """What the release in a directory numbers its indices in (`ogquery.guard`).
+
+    Its own manifest, and the identity and variant axis its indices are scoped to: its
+    own, or, for a Hybrid's Dense Component, the Hybrid's identity and the Hybrid's panel
+    rows (`PANEL`). Found by `release_scope_of`, the one place a reader learns its space.
+    """
+
+    #: The release directory's real path, symlinks followed.
+    path: Path
+    manifest: StoreManifest
+    identity: ReleaseIdentity
+    #: `VARIANT` for a release's own variant axis, `PANEL` for a Dense Component's rows.
+    variant: str
+    #: The real path of the Hybrid this is the Dense Component of, else None.
+    hybrid_root: Path | None = None
+
+    @property
+    def spaces(self) -> CellSpaces:
+        """Its cells' numbering: its rows (variants) and its columns (Analyses)."""
+        return CellSpaces(
+            IndexSpace(self.identity, self.variant), IndexSpace(self.identity, ANALYSIS)
+        )
+
+    @property
+    def analyses_path(self) -> Path:
+        """The `analyses.tsv` its columns are numbered by: a Dense Component's Hybrid's."""
+        return (self.path if self.hybrid_root is None else self.hybrid_root) / "analyses.tsv"
+
+
+def release_scope_of(
+    directory: str | Path, *, manifest: StoreManifest | None = None
+) -> ReleaseScope:
+    """The scope of the release in `directory`, from its `manifest.json` (passed as
+    `manifest` where the caller has already loaded it, so each is read once).
+
+    A Dense Component is told from its place, on its real path: a ``dense/`` directory under
+    a Hybrid manifest (`hybrid.hybrid_manifest_of`, the one structural test, which
+    `hybrid_root_of` asks too). It is one only if it is a Dense release of the Hybrid's own
+    release; a ``dense/`` under a Hybrid of another release is refused, and so is one under a
+    manifest that cannot be read, rather than taken for a standalone release."""
+    path = Path(directory).resolve()
+    if manifest is None:
+        manifest = _load(path / "manifest.json")
     try:
-        found = _component_identity(directory, StoreManifest.load(manifest_path))
+        found = hybrid_manifest_of(path)
+    except UnreadableHybridManifest as error:
+        raise ReleaseIdUnknown(
+            f"cannot tell whether {path} is a Dense Component: {error}"
+        ) from error
+    if found is None:
+        return ReleaseScope(path, manifest, manifest.identity, VARIANT)
+    root, recorded = found
+    try:
+        hybrid = StoreManifest.from_dict(recorded)
+    except (ValueError, KeyError, TypeError) as error:
+        raise ReleaseIdUnknown(
+            f"cannot tell whether {path} is a Dense Component: {root / 'manifest.json'} is "
+            f"unreadable ({type(error).__name__}: {error})"
+        ) from error
+    if manifest.primary_layout is not PrimaryStorageLayout.DENSE:
+        raise ReleaseIdUnknown(
+            f"{path} sits where a Hybrid's Dense Component does but is a "
+            f"{manifest.primary_layout.value} release"
+        )
+    if hybrid.release_id != manifest.release_id:
+        raise ReleaseIdUnknown(
+            f"{path} is release {manifest.release_id!r} but sits where the Dense Component of "
+            f"the Hybrid release {hybrid.release_id!r} at {root} does: it is neither that "
+            "Hybrid's component nor a release of its own"
+        )
+    return ReleaseScope(path, manifest, hybrid.identity, PANEL, hybrid_root=root)
+
+
+def _load(manifest_path: Path) -> StoreManifest:
+    try:
+        return StoreManifest.load(manifest_path)
     except ReleaseIdUnknown as error:
         raise ReleaseIdUnknown(f"{manifest_path}: {error}") from error
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise ReleaseIdUnknown(
-            f"cannot learn which release {str(directory)!r} is: {manifest_path} is unreadable "
-            f"({type(error).__name__}: {error})"
+            f"cannot learn which release {str(manifest_path.parent)!r} is: {manifest_path} is "
+            f"unreadable ({type(error).__name__}: {error})"
         ) from error
-    if explicit is not None and explicit != found:
-        raise ReleaseIdUnknown(
-            f"{manifest_path} says {found} but {explicit} was given; a manifest that is "
-            "reachable decides"
+
+
+def release_identity(
+    directory: str | Path, *, explicit: ReleaseIdentity | None = None
+) -> ReleaseIdentity:
+    """The identity of the release in `directory` (`release_spaces`)."""
+    return release_spaces(directory, explicit=explicit).analysis.identity
+
+
+def release_spaces(directory: str | Path, *, explicit: ReleaseIdentity | None = None) -> CellSpaces:
+    """The spaces of the release in `directory`, from its `manifest.json` (`release_scope_of`).
+    An `explicit` identity is accepted only where no manifest is there, and refused where one
+    is and says otherwise. With neither, the reader refuses."""
+    directory = Path(directory).resolve()
+    if not (directory / "manifest.json").is_file():
+        return _explicit(
+            explicit, f"cannot learn which release {str(directory)!r} is: it has no manifest.json"
         )
+    found = release_scope_of(directory).spaces
+    _agrees(found, explicit, directory / "manifest.json")
     return found
 
 
 def group_identity(group: Any, *, explicit: ReleaseIdentity | None = None) -> ReleaseIdentity:
-    """The identity of the release whose `data.zarr` holds the Zarr `group`.
+    """The identity of the release whose `data.zarr` holds the Zarr `group` (`group_spaces`)."""
+    return group_spaces(group, explicit=explicit).analysis.identity
 
-    Never guessed. The store's real path (symlinks followed) must be a directory named
-    ``data.zarr`` whose parent holds a `manifest.json`, and that manifest must describe this
-    store: a release with a Ragged component (`ragged/`) is not Dense, and a Dense one has
-    none. A Zarr-only copy, or a store that is not a local ``data.zarr``, has no manifest to
-    ask, and needs `explicit`."""
+
+def group_spaces(group: Any, *, explicit: ReleaseIdentity | None = None) -> CellSpaces:
+    """The spaces of the release whose `data.zarr` holds the Zarr `group`.
+
+    The store's real path (symlinks followed) must be a directory named ``data.zarr`` whose
+    parent holds a `manifest.json`, and that manifest must describe this store
+    (`store_spaces`). A store that is not a local ``data.zarr`` has no manifest to ask, and
+    needs `explicit`; its rows are then that release's own variant axis."""
     root = getattr(group.store, "root", None)
     if root is None:
-        if explicit is None:
-            raise ReleaseIdUnknown(
-                f"cannot learn which release the Zarr store {group.store!r} belongs to: it has "
-                "no local directory; pass identity="
-            )
-        return explicit
-    store = Path(root).resolve()
-    if store.name != "data.zarr" or not (store.parent / "manifest.json").is_file():
-        if explicit is None:
-            raise ReleaseIdUnknown(
-                f"cannot learn which release the Zarr store at {str(store)!r} belongs to: it is "
-                "not the data.zarr of a release with a manifest.json; pass identity="
-            )
-        return explicit
-    manifest = StoreManifest.load(store.parent / "manifest.json")
-    ragged = (store / "ragged").is_dir()
-    if ragged == (manifest.primary_layout is PrimaryStorageLayout.DENSE):
-        raise ReleaseIdUnknown(
-            f"{store.parent / 'manifest.json'} describes a {manifest.primary_layout.value} "
-            f"release but {store} {'has' if ragged else 'has no'} ragged/ component: it is not "
-            "this store's manifest"
+        return _explicit(
+            explicit,
+            f"cannot learn which release the Zarr store {group.store!r} belongs to: it has no "
+            "local directory",
         )
-    return release_identity(store.parent, explicit=explicit)
+    return store_spaces(Path(root), explicit=explicit)
 
 
-def release_scope(path: str | Path, manifest: StoreManifest) -> ReleaseIdentity:
-    """The identity an opened release's indices are scoped to: its manifest's, or its
-    Hybrid's where it is a Hybrid's Dense Component (`release_identity`)."""
-    return _component_identity(Path(path).resolve(), manifest)
+def store_spaces(store: str | Path, *, explicit: ReleaseIdentity | None = None) -> CellSpaces:
+    """The spaces of the release whose ``data.zarr`` is at `store` (a directory, or a link
+    to one), bound to it.
+
+    Never guessed, and never more than the store's own records can tell. The manifest beside
+    the store's real path must describe it, by the cheap discriminators the store records:
+
+    - its layout: a Dense store has no ``ragged/`` component and a Ragged or Hybrid one does,
+      and a store that records its ``layout`` records the manifest's;
+    - its completion state, where the store records one (a Dense grid's, or a Ragged
+      release's sequence; a Hybrid's Overflow is observed by construction and says nothing
+      of the release's);
+    - its dimensions: the Analyses its grid or sequence holds against the release's
+      `analyses.tsv` (a Dense Component's, its Hybrid's), and the rows of its grid (or of a
+      by-variant index) against the release's variant axis (a Dense Component's,
+      ``dense_to_shared.npy``).
+
+    **The limit.** A store that agrees with another release's manifest on all of these -- an
+    exact structural twin, two releases built alike from inputs of the same shape -- cannot
+    be told from its own: nothing in a store names the release that wrote it. Telling them
+    apart needs an identity the writer stamps into the store (opengwasdb's to add)."""
+    path = Path(store).resolve()
+    manifest_path = path.parent / "manifest.json"
+    if path.name != "data.zarr" or not manifest_path.is_file():
+        return _explicit(
+            explicit,
+            f"cannot learn which release the Zarr store at {str(path)!r} belongs to: it is not "
+            "the data.zarr of a release with a manifest.json",
+        )
+    scope = release_scope_of(path.parent)
+    faults = _store_faults(path, scope)
+    if faults:
+        raise ReleaseIdUnknown(
+            f"{manifest_path} is not this store's manifest: {'; '.join(faults)} ({path})"
+        )
+    _agrees(scope.spaces, explicit, manifest_path)
+    return scope.spaces
 
 
-def _component_identity(directory: Path, manifest: StoreManifest) -> ReleaseIdentity:
-    """A release's identity, or its Hybrid's where it is a Hybrid's Dense Component.
+def data_spaces(release: str | Path, *, explicit: ReleaseIdentity | None = None) -> CellSpaces:
+    """The spaces of what a reader opening ``<release>/data.zarr`` reads (`store_spaces`).
+    The store must be that release's own: a ``data.zarr`` that is a link into another
+    release is refused, since the manifest at `release` does not describe it. A release
+    directory with no manifest takes `explicit`."""
+    directory = Path(release).resolve()
+    store = Path(release) / "data.zarr"
+    if not (directory / "manifest.json").is_file():
+        return _explicit(
+            explicit, f"cannot learn which release {str(directory)!r} is: it has no manifest.json"
+        )
+    if store.exists() and store.resolve().parent != directory:
+        raise ReleaseIdUnknown(
+            f"{store} resolves to {store.resolve()}, outside the release at {directory}: its "
+            f"manifest does not describe the data.zarr it would read"
+        )
+    return store_spaces(store, explicit=explicit)
 
-    A Dense Component is the ``dense/`` directory of a Hybrid release and has a manifest of
-    its own, with a Store id of its own, but its Analyses and panel rows are the Hybrid's:
-    an index into them is scoped to the Hybrid. It is a component only if the parent really
-    is a Hybrid's manifest and names the same release; nothing else is taken for one."""
-    parent = directory.parent / "manifest.json"
-    if directory.name != "dense" or not parent.is_file():
-        return manifest.identity
+
+def _explicit(explicit: ReleaseIdentity | None, cannot: str) -> CellSpaces:
+    if explicit is None:
+        raise ReleaseIdUnknown(f"{cannot}; pass identity= where no manifest is reachable")
+    return CellSpaces(IndexSpace(explicit, VARIANT), IndexSpace(explicit, ANALYSIS))
+
+
+def _agrees(found: CellSpaces, explicit: ReleaseIdentity | None, manifest_path: Path) -> None:
+    if explicit is not None and explicit != found.analysis.identity:
+        raise ReleaseIdUnknown(
+            f"{manifest_path} says {found.analysis.identity} but {explicit} was given; a "
+            "manifest that is reachable decides"
+        )
+
+
+def _store_faults(store: Path, scope: ReleaseScope) -> list[str]:
+    """How the Zarr store at `store` disagrees with the release `scope` describes."""
+    manifest = scope.manifest
+    dense = manifest.primary_layout is PrimaryStorageLayout.DENSE
+    ragged = (store / "ragged").is_dir()
+    if ragged == dense:
+        return [
+            f"it describes a {manifest.primary_layout.value} release but the store "
+            f"{'has' if ragged else 'has no'} ragged/ component"
+        ]
+    if dense:
+        records, shape = _zarr_attributes(store), _zarr_shape(store / "z")
+        recorded_analyses: Any = None if shape is None else shape[1]
+        recorded_rows = None if shape is None else shape[0]
+    else:
+        records = _zarr_attributes(store / "ragged")
+        offsets = _zarr_shape(store / "ragged" / "offsets")
+        recorded_analyses = records.get("n_analyses", None if offsets is None else offsets[0] - 1)
+        by_variant = _zarr_shape(store / "ragged" / "by_variant" / "offsets")
+        recorded_rows = None if by_variant is None else by_variant[0] - 1
+    n_rows = _n_rows(scope)
+    faults = []
+    layout = records.get("layout")
+    if layout is not None and layout != ("dense" if dense else "ragged"):
+        faults.append(f"the store records layout {layout!r}")
+    state = records.get("completion_state")
+    hybrid = manifest.primary_layout is PrimaryStorageLayout.HYBRID
+    if state is not None and not hybrid and state != manifest.completion_state.value:
+        faults.append(
+            f"the store records completion state {state!r}, the manifest "
+            f"{manifest.completion_state.value!r}"
+        )
+    n_analyses = _n_analyses(scope.analyses_path)
+    if recorded_analyses is not None and n_analyses is not None:
+        if int(recorded_analyses) != n_analyses:
+            faults.append(
+                f"the store holds {int(recorded_analyses)} Analyses, the release {n_analyses}"
+            )
+    if recorded_rows is not None and n_rows is not None and recorded_rows != n_rows:
+        faults.append(f"the store holds {recorded_rows} variant rows, the release {n_rows}")
+    return faults
+
+
+def _zarr_attributes(group: Path) -> dict[str, Any]:
+    """A Zarr group's recorded attributes, read from its metadata alone (v3, then v2)."""
+    for name, key in (("zarr.json", "attributes"), (".zattrs", None)):
+        document = _json(group / name)
+        if isinstance(document, dict):
+            found = document if key is None else document.get(key, {})
+            return dict(found) if isinstance(found, dict) else {}
+    return {}
+
+
+def _zarr_shape(array: Path) -> tuple[int, ...] | None:
+    """A Zarr array's recorded shape, from its metadata alone (v3, then v2); None if absent."""
+    for name in ("zarr.json", ".zarray"):
+        document = _json(array / name)
+        if isinstance(document, dict) and isinstance(document.get("shape"), list):
+            return tuple(int(n) for n in document["shape"])
+    return None
+
+
+def _json(path: Path) -> Any:
     try:
-        hybrid = StoreManifest.load(parent)
-    except (OSError, ValueError, KeyError, TypeError):
-        return manifest.identity
-    if (
-        hybrid.primary_layout is PrimaryStorageLayout.HYBRID
-        and manifest.primary_layout is PrimaryStorageLayout.DENSE
-        and hybrid.release_id == manifest.release_id
-    ):
-        return hybrid.identity
-    return manifest.identity
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _n_analyses(path: Path) -> int | None:
+    """The Analyses `analyses.tsv` lists, by its rows; None where there is no table."""
+    try:
+        with path.open("rb") as handle:
+            return max(sum(1 for line in handle if line.strip()) - 1, 0)
+    except OSError:
+        return None
+
+
+#: The variant axis's row count, by the first of these the release carries: format 0.3.0's
+#: ALID sidecar, or the 0.2 series' offsets.
+_AXIS_ROW_FILES = ("variant_alid_order.npy", "variant_offsets.npy")
+
+
+def _n_rows(scope: ReleaseScope) -> int | None:
+    """How many variant rows the release's grid is numbered over: a Dense Component's panel
+    (`dense_to_shared.npy`), or the release's own axis; None where nothing records it."""
+    if scope.hybrid_root is not None:
+        return _npy_length(scope.path / DENSE_TO_SHARED_FILENAME)
+    for name in _AXIS_ROW_FILES:
+        found = _npy_length(scope.path / name)
+        if found is not None:
+            return found
+    return None
+
+
+def _npy_length(path: Path) -> int | None:
+    if not path.is_file():
+        return None
+    try:
+        return int(np.load(path, mmap_mode="r").shape[0])
+    except (OSError, ValueError):
+        return None

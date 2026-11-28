@@ -258,6 +258,35 @@ def entry_points() -> dict[str, tuple[Any, Callable[[Any], Any]]]:
             ragged._reader.spaces,
             lambda e: ragged._reader.inspect(cells, expect_spaces=e),
         ),
+        # Review round 2's finds (`test_index_space_sweep`).
+        "ByVariantReader.rows_for_variant_range": (
+            by_variant.index_space,
+            lambda e: by_variant.rows_for_variant_range(0, 1, expect_space=e),
+        ),
+        "ByVariantReader.decode": (
+            by_variant.index_space,
+            lambda e: by_variant.decode(0, 1, 0, 0, expect_space=e),
+        ),
+        "RaggedCSRReader.se_slice": (
+            csr.spaces.analysis,
+            lambda e: csr.se_slice(0, 1, analysis_index=0, expect_space=e),
+        ),
+        "DenseGridReader.z": (
+            dense._grid.spaces,
+            lambda e: dense._grid.z(Cells.cross(rows, [0]), expect_spaces=e),
+        ),
+        "DenseGridReader.windows": (
+            dense._grid.spaces,
+            lambda e: dense._grid.windows(Cells.analysis(0), expect_spaces=e),
+        ),
+        "CsrReader.z": (
+            ragged._reader.spaces,
+            lambda e: ragged._reader.z(Cells.positions(rows), expect_spaces=e),
+        ),
+        "CsrReader.windows": (
+            ragged._reader.spaces,
+            lambda e: ragged._reader.windows(Cells.analysis(0), expect_spaces=e),
+        ),
     }
 
 
@@ -334,7 +363,7 @@ def test_the_space_is_required_not_defaulted() -> None:
         ),
         DenseRhoReader: ("row", "pair", "matrix"),
         IndexedSubset: ("decode_analysis",),
-        ByVariantReader: ("rows_for_variant",),
+        ByVariantReader: ("rows_for_variant", "rows_for_variant_range", "decode"),
     }
     for owner, names in owners.items():
         for name in names:

@@ -27,8 +27,8 @@ from ogquery.encoding.codec import (
     positions_flat,
 )
 from ogquery.encoding.plan import EafBaselineError, StoreEncoding
-from ogquery.guard import VARIANT, IndexSpace, ReleaseIdentity, require_space
-from ogquery.manifest import StoreManifest, release_identity
+from ogquery.guard import IndexSpace, ReleaseIdentity, require_space
+from ogquery.manifest import StoreManifest, data_spaces
 from ogquery.stored import optional_array
 
 #: The index group, under the Ragged component's own group (ADR 0060).
@@ -66,8 +66,9 @@ class ByVariantReader:
         n_axis: int | None = None,
         identity: ReleaseIdentity | None = None,
     ):
-        #: The variant axis this index is over: its release's, learned from its manifest.
-        self.index_space = IndexSpace(release_identity(store_path, explicit=identity), VARIANT)
+        #: The variant axis this index is over: its release's, learned from its manifest, which
+        #: must describe the `data.zarr` read (`manifest.data_spaces`).
+        self.index_space = data_spaces(store_path, explicit=identity).variant
         self._ragged = store_arrays.open_group(Path(store_path) / RAGGED_ZARR_PATH)
         if BY_VARIANT_GROUP not in self._ragged:
             raise ValueError(
@@ -207,27 +208,39 @@ class ByVariantReader:
         pair = self._offsets[variant : variant + 2]
         return int(pair[0]), int(pair[1])
 
-    def rows_for_variant_range(self, low: int, high: int) -> tuple[int, int]:
+    def rows_for_variant_range(
+        self, low: int, high: int, *, expect_space: IndexSpace
+    ) -> tuple[int, int]:
         """The half-open row range a contiguous variant range covers.
 
         `low` is the first and `high` the last variant in the range (inclusive);
         every row between their offsets belongs to a variant in `[low, high]`,
-        because the index is variant-ordered.
+        because the index is variant-ordered. Both are variant indices, read only in the
+        space they came from (`expect_space`).
         """
-        first, _ = self.rows_for_variant(low, expect_space=self.index_space)
-        _, last = self.rows_for_variant(high, expect_space=self.index_space)
+        first, _ = self.rows_for_variant(low, expect_space=expect_space)
+        _, last = self.rows_for_variant(high, expect_space=expect_space)
         return first, last
 
     def decode(
-        self, first_variant: int, last_variant: int, start: int, end: int
+        self,
+        first_variant: int,
+        last_variant: int,
+        start: int,
+        end: int,
+        *,
+        expect_space: IndexSpace,
     ) -> dict[str, np.ndarray]:
         """Decode the index's rows `[start, end)`, whose variants span `[first, last]`.
 
         Returns the six result arrays' raw parts: `variant_index`,
         `analysis_index`, decoded `z`/`se`/`eaf` and the `imputed` mask (all
         zeros on an observed-only component) -- and decoded `n` when the
-        component carries per-association sample sizes (ADR 0067).
+        component carries per-association sample sizes (ADR 0067). `first_variant` and
+        `last_variant` number the rows' variants, so they are read only in the space they
+        came from (`expect_space`).
         """
+        require_space(self.index_space, expect_space, "a variant range")
         start, end = int(start), int(end)
         empty = {
             "variant_index": np.empty(0, dtype="int32"),

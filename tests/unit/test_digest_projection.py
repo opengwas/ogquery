@@ -17,6 +17,7 @@ exchanged would give. It changes nothing on disk.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import replace
 from functools import cache
 from pathlib import Path
@@ -134,12 +135,23 @@ def test_a_release_projected_onto_itself_answers_as_it_does_unprojected(name: st
     """Every answer but an association answer's row order is the unprojected digest, and
     an association answer is the unprojected rows in `(variant_index, analysis_index)`
     order. `top_hits/limit` is the native *unlimited* answer in that order, then limited
-    (the native `limit=3` follows the facade's own, analysis-major order: ADR 0109 §8b)."""
+    (the native `limit=3` follows the facade's own, analysis-major order: ADR 0109 §8b).
+    A projected set asks by ALID alone, so the native questions that name an rsID are not
+    in it, and its variant read names the ALIDs alone."""
     path = RELEASES / name
     projected, plain = own_projected_answers(name), plain_answers(name)
     asked = 0
     with digests.open_query(path) as q:
-        for question in digests.questions(q, q.variants_table(), path):
+        variants = q.variants_table()
+        rsids = {row["rsid"] for row in variants.values() if row["rsid"]}
+        rsids |= set(digests.ABSENT_RSIDS)
+        native = {(x.section, x.name) for x in digests.questions(q, variants, path)}
+        posed = list(digests.questions(q, variants, path, reference_for(path)))
+        for section, question_name in native - {(x.section, x.name) for x in posed}:
+            assert section == "misses" or rsids & set(question_name.split("/")), question_name
+        for question in posed:
+            if question.name.startswith("unheld/"):
+                continue
             try:
                 answer = question.ask()
             except question.refusals as refused:
@@ -161,7 +173,12 @@ def test_a_release_projected_onto_itself_answers_as_it_does_unprojected(name: st
             expected = digests.result_digests(dict(canonical(answer)))
             del expected[digests.PVAL]
             assert section == expected, (question.section, question.name)
+        held = reference_for(path).variants
+        alids = [i for i in digests.reference_of(q).identifiers if i in held]
+        by_alid = digests._digested(q.variants([*alids, *digests.ABSENT_ALIDS]))
     assert asked > 20
+    assert projected["misses"] == {}, "the misses ask by rsID"
+    assert projected["variant_reads"]["variants"] == by_alid
     for key in plain:
         if key in (
             "shapes",
@@ -173,6 +190,10 @@ def test_a_release_projected_onto_itself_answers_as_it_does_unprojected(name: st
             *digests.VALUES,
         ):
             continue  # association answers, compared above, and what is derived from them
+        if key == "variant_reads":
+            mine = {k: v for k, v in projected[key].items() if k != "variants"}
+            assert mine == {k: v for k, v in plain[key].items() if k != "variants"}
+            continue
         assert projected[key] == plain[key], key
 
 
@@ -181,8 +202,13 @@ def test_a_projected_answers_values_are_the_unprojected_values(name: str) -> Non
     """`pval` and `log10_p` are kept as numbers; the same multiset of them is answered."""
     projected, plain = own_projected_answers(name), plain_answers(name)
     for kind in digests.VALUES:
-        assert projected[kind].keys() == plain[kind].keys()
+        assert projected[kind].keys() <= plain[kind].keys()
         for key, values in plain[kind].items():
+            if key not in projected[kind]:
+                assert "/rs" in key or key.startswith("misses/"), key  # posed by rsID
+                continue
+            if "lookup/" in key and not key.startswith("alid_probes"):
+                continue  # its rsIDs are not asked, so its rows differ
             if "top_hits/limit" not in key:  # truncated in another order
                 np.testing.assert_array_equal(
                     np.sort(projected[kind][key]), np.sort(values), err_msg=key
@@ -330,3 +356,125 @@ def test_projected_arrays_compare_eaf_within_a_tolerance_and_everything_else_exa
     assert digests.array_differences(ours, nudged) == [f"shapes/{name}/eaf"]
     moved = {**ours, "shapes": {**ours["shapes"], name: {**arrays, "z": arrays["z"] + 1e-3}}}
     assert digests.array_differences(ours, moved, eaf_tolerance=1.0) == [f"shapes/{name}/z"]
+
+
+# ── review round 2: the comparison ADR 0109 §8b asks for ─────────────────────
+
+
+def _strings(value: Any) -> Iterator[str]:
+    """Every string a question's arguments hold, in lists too."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list | tuple):
+        for item in value:
+            yield from _strings(item)
+
+
+@pytest.mark.parametrize("name", SWAPPED)
+def test_a_projected_question_is_posed_by_analysis_id_and_alid_never_by_rsid(name: str) -> None:
+    """A permitted rename (§7) must not change which kept rows are asked about."""
+    path = RELEASES / name
+    reference = reference_for(path)
+    with digests.open_query(path) as q:
+        variants = q.variants_table()
+        rsids = {row["rsid"] for row in variants.values() if row["rsid"]}
+        assert rsids, "the fixture names variants by rsID"
+        posed: list[str] = []
+        for question in digests.questions(q, variants, path, reference):
+            ask = question.ask
+            arguments = [*getattr(ask, "args", ()), *getattr(ask, "keywords", {}).values()]
+            posed += [s for s in _strings(arguments) if s.startswith("rs")]
+            assert not any(s.startswith("rs") for s in question.name.split("/")), question.name
+    assert posed == [], posed
+    assert any(i in reference.variants for i in reference.identifiers), "ALIDs are still asked"
+
+
+def test_unprojected_questions_still_ask_by_rsid() -> None:
+    """Without a reference nothing changes: the rewrite's proof asks rsIDs as it did."""
+    path = RELEASES / "dense_completed"
+    with digests.open_query(path) as q:
+        names = [x.name for x in digests.questions(q, q.variants_table(), path)]
+    assert any("/rs" in name for name in names)
+
+
+def _variant_read(found: dict[str, dict[str, Any]]) -> tuple[str, str]:
+    """A variant-only read that holds a named variant: (its question, the column holding it)."""
+    for name, columns in found["variant_reads"].items():
+        if isinstance(columns, dict) and "alid" in columns and len(columns["alid"]):
+            return name, "variant_reads"
+    raise AssertionError("no variant-only read holds a row")
+
+
+def test_names_are_compared_apart_from_numbers_and_a_rename_fails_no_number() -> None:
+    path = RELEASES / "ragged_completed"
+    ours = digests.projected_arrays(path, reference_for(path))
+    question, section = _variant_read(ours)
+    names = dict(ours["names"][f"{section}/{question}"])
+    assert set(names) == {"rsid", "source_alid"}
+    assert "rsid" not in ours[section][question] and "source_alid" not in ours[section][question]
+    renamed_rsid = names["rsid"].copy()
+    renamed_rsid[0] = "rs_renamed"
+    renamed = {
+        **ours,
+        "names": {**ours["names"], f"{section}/{question}": {**names, "rsid": renamed_rsid}},
+    }
+    assert digests.array_differences(ours, renamed) == [f"names/{section}/{question}/rsid"]
+    columns = dict(ours[section][question])
+    moved = columns["position"].copy()
+    moved[0] = int(moved[0]) + 1
+    shifted = {**ours, section: {**ours[section], question: {**columns, "position": moved}}}
+    assert digests.array_differences(ours, shifted) == [f"{section}/{question}/position"]
+
+
+def test_the_variants_table_is_compared_by_column_with_names_apart() -> None:
+    path = RELEASES / "hybrid_completed"
+    ours = digests.projected_arrays(path, reference_for(path))
+    table = ours["tables"]["variants_table"]
+    assert {"variant_index", "alid", "position"} <= set(table)
+    assert set(ours["names"]["tables/variants_table"]) == {"rsid", "source_alid"}
+    assert "analyses_table" in ours["tables"]
+
+
+def _rho(values: list[float]) -> dict[str, dict[str, Any]]:
+    return {
+        "rho": {
+            "rho_row/a": {
+                "analysis_id": np.array(["b"] * len(values), dtype=object),
+                "rho": np.array(values, dtype=np.float32),
+                "n_null": np.zeros(len(values), dtype=np.int64),
+            }
+        }
+    }
+
+
+def test_rho_is_compared_bitwise() -> None:
+    """Signed zeros differ; equal infinities and the same NaN are equal (§8b: bitwise)."""
+    assert digests.array_differences(_rho([0.0]), _rho([-0.0])) == ["rho/rho_row/a/rho"]
+    assert digests.array_differences(_rho([np.inf, -np.inf]), _rho([np.inf, -np.inf])) == []
+    assert digests.array_differences(_rho([np.nan]), _rho([np.nan])) == []
+    assert digests.array_differences(_rho([0.5]), _rho([0.5])) == []
+
+
+def test_equal_infinities_are_equal_everywhere() -> None:
+    def shape(z: list[float], eaf: list[float]) -> dict[str, dict[str, Any]]:
+        return {"shapes": {"q": {"z": np.array(z, np.float32), "eaf": np.array(eaf, np.float32)}}}
+
+    same = shape([np.inf, -np.inf, 1.0], [np.inf, 0.5, np.nan])
+    assert digests.array_differences(same, same) == []
+    assert digests.array_differences(same, same, eaf_tolerance=0.1) == []
+    assert digests.array_differences(same, shape([-np.inf, -np.inf, 1.0], [np.inf, 0.5, np.nan]))
+    assert digests.array_differences(
+        same, shape([np.inf, -np.inf, 1.0], [0.5, 0.5, np.nan]), eaf_tolerance=np.float64(1e9)
+    ) == ["shapes/q/eaf"]
+
+
+@pytest.mark.parametrize("tolerance", [float("nan"), float("inf"), -float("inf"), -1e-3])
+def test_a_tolerance_that_is_not_a_finite_non_negative_number_is_refused(tolerance: float) -> None:
+    found = _rho([0.5])
+    with pytest.raises(ValueError, match="tolerance"):
+        digests.array_differences(found, found, eaf_tolerance=tolerance)
+
+
+def test_projected_arrays_say_they_are_the_answer_proof_not_the_cell_proof() -> None:
+    doc = digests.projected_arrays.__doc__ or ""
+    assert "answer proof" in doc and "cell proof" in doc and "#521" in doc

@@ -49,10 +49,10 @@ from ogquery.format import (
     carries_variant_aliases,
     carries_variant_offsets,
 )
-from ogquery.guard import VARIANT, IndexSpace, ReleaseIdentity, require_space
+from ogquery.guard import IndexSpace, ReleaseIdentity, require_space
 from ogquery.hybrid import DenseComponentSharesAxis, shared_axis_root
 from ogquery.identity import normalise_chromosome
-from ogquery.manifest import release_identity
+from ogquery.manifest import release_spaces
 from ogquery.npy_sidecar import WINDOW_ROWS, release_maps
 from ogquery.position_sidecar import MissingPositionSidecar, PositionSidecar
 from ogquery.rsid_index import (
@@ -234,11 +234,12 @@ class VariantAxis:
         identity: ReleaseIdentity | None = None,
     ):
         self.store_path = Path(store_path)
-        #: The release this axis reads: its indices are scoped to it (`ogquery.guard`).
-        #: The Store and release this axis reads, learned from its manifest; `identity=` is
-        #: accepted only where none is reachable. Its indices are scoped to this space.
-        self.identity = release_identity(self.store_path, explicit=identity)
-        self.index_space = IndexSpace(self.identity, VARIANT)
+        #: The space this axis's indices are scoped to (`ogquery.guard`), learned from the
+        #: release's manifest (`manifest.release_spaces`); `identity=` is accepted only where
+        #: none is reachable. A 0.2 Hybrid's Dense Component's own copy numbers the Hybrid's
+        #: panel rows.
+        self.index_space = release_spaces(self.store_path, explicit=identity).variant
+        self.identity = self.index_space.identity
         if shared_axis_root(self.store_path, format_version) is not None:
             raise DenseComponentSharesAxis(
                 f"{self.store_path} is a Hybrid's Dense Component at format_version "

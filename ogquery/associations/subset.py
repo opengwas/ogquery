@@ -10,7 +10,7 @@ import numpy as np
 
 from ogquery.associations.cells import Cells, require_within
 from ogquery.associations.record import Associations, Inspection, Status
-from ogquery.guard import VARIANT, CellSpaces, IndexSpace, require_cells
+from ogquery.guard import CellSpaces, require_cells
 
 if TYPE_CHECKING:
     from ogquery.indexed import IndexedSubset
@@ -27,22 +27,15 @@ class SubsetReader:
 
     carries_n = False
 
-    def __init__(
-        self, subset: IndexedSubset, *, source: str, variant_space: IndexSpace | None = None
-    ) -> None:
-        #: Its columns are the Analyses of the release it indexes; its rows that release's
-        #: variant axis unless the caller says they are another (`variant_space`).
-        self.spaces = CellSpaces(
-            IndexSpace(subset.identity, VARIANT) if variant_space is None else variant_space,
-            subset.index_space,
-        )
+    def __init__(self, subset: IndexedSubset, *, source: str) -> None:
+        #: Its subset's spaces, learned from the release it sits in, never from a caller: that
+        #: release's Analyses, and its variant rows or a Hybrid's panel rows.
+        self.spaces: CellSpaces = subset.spaces
         self._subset = subset
         self._source = source
 
     @classmethod
-    def open(
-        cls, store_path: str | Path, name: str, *, variant_space: IndexSpace | None = None
-    ) -> SubsetReader:
+    def open(cls, store_path: str | Path, name: str) -> SubsetReader:
         # Imported here: the subset module's own validation classifies cells
         # through this package, so a module-level import would be circular.
         from ogquery.indexed import open_indexed_subset
@@ -50,7 +43,6 @@ class SubsetReader:
         return cls(
             open_indexed_subset(store_path, name),
             source=f"Indexed Variant Subset {name!r} of {store_path}",
-            variant_space=variant_space,
         )
 
     def read(

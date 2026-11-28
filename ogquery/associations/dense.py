@@ -21,16 +21,8 @@ from ogquery.associations.record import (
 )
 from ogquery.encoding.plan import StoreEncoding
 from ogquery.encoding.planes import DenseEafPlane, DenseSePlane, DenseZPlane
-from ogquery.guard import (
-    ANALYSIS,
-    VARIANT,
-    CellSpaces,
-    IndexSpace,
-    ReleaseIdentity,
-    ReleaseIdUnknown,
-    require_cells,
-)
-from ogquery.manifest import group_identity
+from ogquery.guard import CellSpaces, ReleaseIdentity, require_cells
+from ogquery.manifest import group_spaces
 
 
 class _Grid(NamedTuple):
@@ -77,18 +69,13 @@ class DenseGridReader:
         *,
         source: str,
         requires_mask: bool | None = None,
-        variant_space: IndexSpace | None = None,
         identity: ReleaseIdentity | None = None,
     ) -> None:
-        #: What the cells are numbered in. The columns are the release's Analyses. The rows are
-        #: its own variant axis unless the caller says they are another (`variant_space`: a
-        #: Hybrid's Dense Component reads panel rows); either way its release is the one whose
-        #: manifest describes this group.
-        found = group_identity(group, explicit=identity)
-        rows = IndexSpace(found, VARIANT) if variant_space is None else variant_space
-        if rows.identity != found:
-            raise ReleaseIdUnknown(f"{source}: rows of {rows.identity} cannot be read from {found}")
-        self.spaces = CellSpaces(rows, IndexSpace(found, ANALYSIS))
+        #: What the cells are numbered in, learned from the release whose manifest describes
+        #: this group (`manifest.group_spaces`), never from a caller: the release's Analyses,
+        #: and its own variant axis or, on a Hybrid's Dense Component, the Hybrid's panel rows.
+        #: `identity=` only where no manifest is reachable.
+        self.spaces = group_spaces(group, explicit=identity)
         self._group = group
         self._encoding = encoding
         self._source = source
@@ -110,7 +97,6 @@ class DenseGridReader:
         *,
         source: str = "Dense grid",
         requires_mask: bool | None = None,
-        variant_space: IndexSpace | None = None,
         identity: ReleaseIdentity | None = None,
     ) -> DenseGridReader:
         """A Reference-Completed grid without its imputed mask is refused rather than
@@ -122,7 +108,6 @@ class DenseGridReader:
             encoding,
             source=source,
             requires_mask=requires_mask,
-            variant_space=variant_space,
             identity=identity,
         )
 
@@ -150,10 +135,16 @@ class DenseGridReader:
     # ── the interface ───────────────────────────────────────────────────────
 
     def windows(
-        self, cells: Cells | None = None, *, max_cells: int | None = None
+        self,
+        cells: Cells | None = None,
+        *,
+        max_cells: int | None = None,
+        expect_spaces: CellSpaces | None = None,
     ) -> Iterator[Cells]:
         """An `analysis` or `analyses` region -- or, with none, the whole grid -- as
-        consecutive `cross` regions of at most `max_cells` cells each.
+        consecutive `cross` regions of at most `max_cells` cells each. A region names
+        Analyses, so it is read only in the spaces it came from (`expect_spaces`, required
+        with a region); the whole grid names none.
 
         For a scan that must not hold a whole Analysis at once: each cell of the
         region comes once, in the region's order, so the windows' reads joined are
@@ -163,6 +154,8 @@ class DenseGridReader:
         region is checked when this is called, before any window is cut
         (`window_region`).
         """
+        if cells is not None:
+            require_cells(self.spaces, expect_spaces, "the region")
         region, step = window_region(
             cells,
             max_cells,
@@ -180,13 +173,14 @@ class DenseGridReader:
                 rows = np.arange(lo, min(lo + step, n), dtype=np.int64)
                 yield Cells.cross(rows, [int(analysis)])
 
-    def z(self, cells: Cells) -> np.ndarray:
+    def z(self, cells: Cells, *, expect_spaces: CellSpaces) -> np.ndarray:
         """Decoded Z of a `cross` region -- a window -- for a scan that thresholds Z
         alone: every cell, a missing one as NaN, in the region's order.
 
         A non-canonical marker is refused here, as every read refuses one (spec §15):
         a NaN clears no cutoff, so a scan that compared it would drop the cell.
         """
+        require_cells(self.spaces, expect_spaces, "the cells")
         if cells.kind != "cross" or cells.vi is None or cells.ai is None:
             raise TypeError(f"Z alone is read for a window, not a {cells.kind!r} region")
         require_within(

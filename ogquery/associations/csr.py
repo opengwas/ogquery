@@ -26,8 +26,8 @@ from ogquery.associations.record import (
 from ogquery.by_variant import ByVariantReader, VariantIndexError, has_variant_index
 from ogquery.csr import RAGGED_ZARR_PATH, RaggedCSRReader
 from ogquery.encoding.plan import StoreEncoding
-from ogquery.guard import CellSpaces, require_cells
-from ogquery.manifest import StoreManifest
+from ogquery.guard import CellSpaces, ReleaseIdentity, require_cells
+from ogquery.manifest import StoreManifest, data_spaces
 
 #: A by-variant index decode's columns, in `Inspection.of`'s order.
 _block_columns = itemgetter("variant_index", "analysis_index", "z", "se", "eaf", "imputed")
@@ -82,8 +82,12 @@ class CsrReader:
         *,
         source: str,
         requires_mask: bool | None = None,
+        identity: ReleaseIdentity | None = None,
     ) -> None:
         self._path = Path(store_path)
+        # Which release this reads is settled first, before the mask or a plane is asked
+        # about: a `data.zarr` its manifest does not describe is refused as that.
+        data_spaces(self._path, explicit=identity)
         manifest = _manifest(self._path)
         if encoding is None:
             if manifest is None:
@@ -101,7 +105,8 @@ class CsrReader:
         record.require_mask(
             record.mask_required(requires_mask, state, source), "imputed" in group, source
         )
-        self.structure = RaggedCSRReader(store_path, encoding)
+        self.structure = RaggedCSRReader(store_path, encoding, identity=identity)
+        self._identity = identity
         self._by_variant: ByVariantReader | None = None
         #: The variant axis `open_variant_index` was given; a CSR records none itself.
         self._n_variants: int | None = None
@@ -115,17 +120,20 @@ class CsrReader:
         *,
         source: str | None = None,
         requires_mask: bool | None = None,
+        identity: ReleaseIdentity | None = None,
     ) -> CsrReader:
         """A Reference-Completed component's imputed mask says which rows are
         imputed, so one without it is refused rather than read as all-observed
         (spec §15). Whether the component is completed is its release's manifest
         -- or, with none, its sequence's `completion_state` record -- unless the
-        caller says (`requires_mask`); a component that records neither is refused."""
+        caller says (`requires_mask`); a component that records neither is refused.
+        `identity` is the release's where no manifest is reachable (`RaggedCSRReader`)."""
         return cls(
             store_path,
             encoding,
             source=source or f"Ragged component {store_path}",
             requires_mask=requires_mask,
+            identity=identity,
         )
 
     @property
@@ -156,16 +164,24 @@ class CsrReader:
                 f"Store at {self._path} carries no variant index (ragged/by_variant); "
                 f"build it with 'ogdb build-variant-index {self._path}'"
             )
-        self._by_variant = ByVariantReader(self._path, self._encoding, n_axis=n_variants)
+        self._by_variant = ByVariantReader(
+            self._path, self._encoding, n_axis=n_variants, identity=self._identity
+        )
         self._n_variants = int(n_variants)
 
     # ── the interface ───────────────────────────────────────────────────────
 
     def windows(
-        self, cells: Cells | None = None, *, max_cells: int | None = None
+        self,
+        cells: Cells | None = None,
+        *,
+        max_cells: int | None = None,
+        expect_spaces: CellSpaces | None = None,
     ) -> Iterator[Cells]:
         """An `analysis` or `analyses` region -- or, with none, the whole component --
-        as consecutive `positions` regions of at most `max_cells` rows each.
+        as consecutive `positions` regions of at most `max_cells` rows each. A region
+        names Analyses, whose offsets it is cut at, so it is read only in the spaces it
+        came from (`expect_spaces`, required with a region); the whole component names none.
 
         For a scan that must not hold a whole Analysis, or a whole sequence, at
         once: each row of the region comes once, in the region's order, so the
@@ -174,6 +190,8 @@ class CsrReader:
         the sequence's inner chunks (#252). The region is checked when this is
         called, before any window is cut (`window_region`).
         """
+        if cells is not None:
+            require_cells(self.spaces, expect_spaces, "the region")
         region, step = window_region(
             cells,
             max_cells,
@@ -188,13 +206,14 @@ class CsrReader:
             for lo in range(start, stop, step):
                 yield Cells.positions(np.arange(lo, min(lo + step, stop), dtype=np.int64))
 
-    def z(self, cells: Cells) -> np.ndarray:
+    def z(self, cells: Cells, *, expect_spaces: CellSpaces) -> np.ndarray:
         """Decoded Z of a `positions` region -- a window -- for a scan that thresholds
         Z alone, in the region's order.
 
         A non-canonical marker is refused here, as every read refuses one (spec §15):
         a NaN clears no cutoff, so a scan that compared it would drop the row.
         """
+        require_cells(self.spaces, expect_spaces, "the cells")
         if cells.kind != "positions" or cells.pos is None:
             raise TypeError(f"Z alone is read for positions, not a {cells.kind!r} region")
         run = self._rows_of(cells)
@@ -304,7 +323,13 @@ class CsrReader:
             variants,
             analysis_index,
             z,
-            csr.se_slice(start, end, analysis_index=analysis_index, eaf=eaf.values),
+            csr.se_slice(
+                start,
+                end,
+                analysis_index=analysis_index,
+                eaf=eaf.values,
+                expect_space=csr.spaces.analysis,
+            ),
             eaf.values,
             eaf.imputed,
             csr.n_slice(start, end) if self.carries_n else None,
@@ -322,11 +347,15 @@ class CsrReader:
         first, last = (
             self._by_variant.rows_for_variant(low, expect_space=self._by_variant.index_space)
             if low == high
-            else self._by_variant.rows_for_variant_range(low, high)
+            else self._by_variant.rows_for_variant_range(
+                low, high, expect_space=self._by_variant.index_space
+            )
         )
         if first == last:
             return self._empty()
-        block = self._by_variant.decode(low, high, first, last)
+        block = self._by_variant.decode(
+            low, high, first, last, expect_space=self._by_variant.index_space
+        )
         vi, ai, z, se, eaf, flags = _block_columns(block)
         found = Inspection.of(vi, ai, z, se, eaf, flags, block.get("n"))
         if len(np.unique(wanted)) == high - low + 1:

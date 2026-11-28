@@ -34,9 +34,15 @@ import numpy as np
 
 from ogquery.arrays import open_group
 from ogquery.enums import PrimaryStorageLayout
-from ogquery.format import LAST_0_2_FORMAT_VERSION, carries_variant_offsets, check_format_version
-from ogquery.hybrid import DENSE_TO_SHARED_FILENAME, shared_axis_root
-from ogquery.manifest import StoreManifest, release_scope
+from ogquery.format import (
+    LAST_0_2_FORMAT_VERSION,
+    carries_variant_offsets,
+    check_format_version,
+    dense_component_shares_axis,
+)
+from ogquery.guard import ReleaseIdUnknown
+from ogquery.hybrid import DENSE_TO_SHARED_FILENAME
+from ogquery.manifest import StoreManifest, release_scope_of
 from ogquery.panel_axis import AnyVariantAxis, PanelVariantAxis
 from ogquery.top_hits import TopHitTiers
 from ogquery.variant_axis import (
@@ -172,7 +178,13 @@ class StoreRelease(ReleasePaths):
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_paths", release_paths(self.path))
-        root = shared_axis_root(self.path, self.manifest.format_version)
+        # Whether it is a Dense Component is asked as every reader asks it, of the real path,
+        # requiring the Hybrid to be of its own release (`release_scope_of`).
+        hybrid = release_scope_of(self.path, manifest=self.manifest).hybrid_root
+        root = None
+        if hybrid is not None and dense_component_shares_axis(self.manifest.format_version):
+            given = self.path.parent
+            root = given if given.resolve() == hybrid else hybrid
         object.__setattr__(self, "_shared_root", root)
         if root is not None:
             self._paths["analyses"] = release_paths(root)["analyses"]
@@ -207,12 +219,27 @@ class StoreRelease(ReleasePaths):
 
     def top_hit_tiers(self, root: Any = None) -> TopHitTiers:
         """This release's Top-Hit tiers, read from `root` (its `data.zarr`, opened here if
-        None), knowing which tier's Clumps its manifest declares (spec §2, §18.1)."""
-        return TopHitTiers(
-            self.arrays() if root is None else root,
-            identity=release_scope(self.path, self.manifest),
-            clumps=self.manifest.clumps,
-        )
+        None), knowing which tier's Clumps its manifest declares (spec §2, §18.1).
+
+        `root` must be this release's own `data.zarr`, by its real path: a Hybrid and its
+        Dense Component share an identity, but the component's tiers hold panel rows, so
+        identity alone cannot tell one's arrays from the other's."""
+        if root is None:
+            root = self.arrays()
+        else:
+            self._require_own_arrays(root)
+        return TopHitTiers(root, clumps=self.manifest.clumps)
+
+    def _require_own_arrays(self, root: Any) -> None:
+        own = (self.path / "data.zarr").resolve()
+        local = getattr(root.store, "root", None)
+        found = None if local is None else Path(local).resolve()
+        if found != own or str(getattr(root, "path", "")).strip("/"):
+            where = repr(root.store) if found is None else f"{found}/{root.path}".rstrip("/")
+            raise ReleaseIdUnknown(
+                f"the arrays at {where} are not the data.zarr of the release at {self.path} "
+                f"({own}): its tiers are read from its own arrays"
+            )
 
     def variant_axis(self, *, aliases: bool) -> AnyVariantAxis:
         """This release's Variant Axis; `aliases` also consults `variant_aliases`. For a

@@ -90,7 +90,7 @@ from ogquery.associations import (
 from ogquery.csr import RaggedCSRReader
 from ogquery.enums import CompletionState, PrimaryStorageLayout
 from ogquery.format import carries_variant_aliases
-from ogquery.guard import IndexSpace
+from ogquery.guard import CellSpaces, IndexSpace, require_space
 from ogquery.hybrid import dense_to_shared_path, panel_rows
 from ogquery.indexed import (
     IndexedSubsetError,
@@ -304,9 +304,9 @@ def _scan_csr_hits(reader: CsrReader, region: Cells | None, threshold: float) ->
     cutoff would otherwise drop.
     """
     hits: list[np.ndarray] = []
-    for window in reader.windows(region):
+    for window in reader.windows(region, expect_spaces=reader.spaces):
         assert window.pos is not None
-        mask = reader_stats.clears_cutoff(reader.z(window), threshold)
+        mask = reader_stats.clears_cutoff(reader.z(window, expect_spaces=reader.spaces), threshold)
         if mask.any():
             hits.append(window.pos[mask])
     if not hits:
@@ -345,15 +345,32 @@ def _ragged_top_hits(
 
 
 def _stamped[F: Callable[..., Any]](read: F) -> F:
-    """A query method whose `Associations` answer is stamped with the facade's index spaces
-    (`ogquery.guard`): the spaces its indices are scoped to."""
+    """A query method whose `Associations` answer is in the facade's index spaces
+    (`ogquery.guard`). The readers stamp what they read, and this verifies their stamp,
+    never overwrites it: an answer stamped with another space is refused. Only an empty
+    answer, which holds no index, may carry none, and is given the facade's."""
 
     @wraps(read)
     def stamped(self: Any, *args: Any, **kwargs: Any) -> Associations:
         found: Associations = read(self, *args, **kwargs)
-        return replace(found, variant_space=self.variant_space, analysis_space=self.analysis_space)
+        where = f"{type(self).__name__}.{read.__name__}'s answer"
+        if len(found.variant_index) == 0:
+            return replace(
+                found, variant_space=self.variant_space, analysis_space=self.analysis_space
+            )
+        require_space(self.variant_space, found.variant_space, f"{where}'s variant_index")
+        require_space(self.analysis_space, found.analysis_space, f"{where}'s analysis_index")
+        return found
 
     return cast(F, stamped)
+
+
+def _require_reader_spaces(facade: Any, spaces: CellSpaces, reader: str) -> None:
+    """A reader a facade opened numbers its cells as the facade numbers its indices: the
+    reader learned its spaces from the release it opened, the facade from its axis and
+    `analyses.tsv`, and an integer one hands the other means the same thing in both."""
+    require_space(spaces.variant, facade.variant_space, f"{reader}'s variant rows")
+    require_space(spaces.analysis, facade.analysis_space, f"{reader}'s Analyses")
 
 
 class _StoreQueryBase:
@@ -492,8 +509,8 @@ class StoreQuery(_StoreQueryBase):
             store.manifest.encoding,
             source=f"Dense Store Release {store.path}",
             requires_mask=_is_completed(store),
-            variant_space=self._variant_axis.index_space,
         )
+        _require_reader_spaces(self, self._grid.spaces, f"Dense Store Release {store.path}")
         self._rho_reader: DenseRhoReader | None = (
             DenseRhoReader(self._root["rho"], self._grid.n_analyses)
             if "rho" in self._root
@@ -547,9 +564,8 @@ class StoreQuery(_StoreQueryBase):
         not excuse the selector.  A *valid* subset with an unknown Analysis ID
         raises `UnknownAnalysisError`, as the ordinary read does.
         """
-        subset = SubsetReader.open(
-            self.store.path, subset_name, variant_space=self._variant_axis.index_space
-        )
+        subset = SubsetReader.open(self.store.path, subset_name)
+        _require_reader_spaces(self, subset.spaces, f"Indexed Variant Subset {subset_name!r}")
         col = self._analysis_index(analysis_id)
         return subset.read(
             Cells.analysis(col), observed_only=observed_only, expect_spaces=subset.spaces
@@ -741,6 +757,7 @@ class RaggedStoreQuery(_StoreQueryBase):
         self._reader.open_variant_index(self._variant_axis.n_variants)
         self._csr = self._reader.structure
         self._analyses = AnalysesIndex(store.path)
+        _require_reader_spaces(self, self._reader.spaces, f"Ragged Store Release {store.path}")
         self._top_hits = store.top_hit_tiers()
         # Every result carries `n` exactly when the release has the plane, so a
         # caller can tell "no sample sizes here" from "no rows" (ADR 0067).
@@ -934,6 +951,7 @@ class HybridStoreQuery(_StoreQueryBase):
             analyses=self._analyses,
         )
         self._overflow.open_variant_index(self._variant_axis.n_variants)
+        _require_reader_spaces(self, self._overflow.spaces, f"Ragged Overflow of {store.path}")
         self._top_hits = store.top_hit_tiers()  # overflow's own tiers
         # The Dense Component's Rho Matrix, as its query opened it: read once (#496).
         self._rho_reader = self._dense.rho_reader()
