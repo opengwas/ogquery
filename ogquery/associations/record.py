@@ -15,13 +15,14 @@ straight from the stored codes.
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import IntEnum
 from functools import cached_property
 from typing import Any
 
 import numpy as np
 
+from ogquery.guard import IndexSpace
 from ogquery.stats import AssociationStatistics, association_statistics
 
 
@@ -343,10 +344,12 @@ class Associations(Mapping[str, np.ndarray]):
     eaf: np.ndarray
     status: np.ndarray
     n: np.ndarray | None = None
-    #: The `release_id` of the release these rows were read from, which their indices are
-    #: scoped to (`ogquery.guard`). Not a key of the mapping view: no digest sees it. The
-    #: query facade stamps every answer; None on a record built by hand.
-    release_id: str | None = None
+    #: What the two index columns are scoped to (`ogquery.guard`): the Store, release and
+    #: axis their numbers belong to. Not keys of the mapping view: no digest sees them. The
+    #: query facade stamps every answer; None on a record built by hand, which `resolve`
+    #: refuses.
+    variant_space: IndexSpace | None = None
+    analysis_space: IndexSpace | None = None
 
     def __post_init__(self) -> None:
         fields = {
@@ -421,6 +424,11 @@ class Associations(Mapping[str, np.ndarray]):
             "association_status",
         )
 
+    @property
+    def release_id(self) -> str | None:
+        """The release the variant index is scoped to, or None where unstamped."""
+        return None if self.variant_space is None else self.variant_space.release_id
+
     @cached_property
     def labels(self) -> np.ndarray:
         """`status` as the object array of labels a result carries."""
@@ -472,7 +480,8 @@ class Associations(Mapping[str, np.ndarray]):
             self.eaf[index],
             self.status[index],
             None if self.n is None else self.n[index],
-            self.release_id,
+            self.variant_space,
+            self.analysis_space,
         )
 
     def where(self, keep: np.ndarray) -> Associations:
@@ -489,14 +498,19 @@ class Associations(Mapping[str, np.ndarray]):
         """Without the missing rows."""
         return self.where(self.status != Status.MISSING)
 
-    def remap_variants(self, to_shared: np.ndarray) -> Associations:
-        """The same rows with `variant_index` translated through `to_shared`."""
+    def remap_variants(
+        self, to_shared: np.ndarray, *, variant_space: IndexSpace | None
+    ) -> Associations:
+        """The same rows with `variant_index` translated through `to_shared`, into the
+        numbering `variant_space` names (None for an unstamped record): the rows have left the
+        one they were stamped with."""
         if not self.count:
-            return self
+            return replace(self, variant_space=variant_space)
         vi = np.asarray(to_shared)[self.variant_index.astype(np.int64)]
         return Associations(
             vi, self.analysis_index, self.z, self.se, self.eaf, self.status, self.n,
-            self.release_id,
+            variant_space,
+            self.analysis_space,
         )
 
     def in_genomic_order(self) -> Associations:
@@ -512,12 +526,16 @@ class Associations(Mapping[str, np.ndarray]):
             raise ValueError("a record without n cannot join a result carrying n")
         if not parts:
             return Associations.empty(with_n=with_n)
-        releases = {p.release_id for p in parts if p.release_id is not None}
-        if len(releases) > 1:
+        # An empty part holds no index to mis-scope, so it joins any space.
+        spaces = {(p.variant_space, p.analysis_space) for p in parts if p.count} or {
+            (parts[0].variant_space, parts[0].analysis_space)
+        }
+        if len(spaces) > 1:
             raise ValueError(
-                "records read from different releases cannot be joined: "
-                f"{sorted(map(str, releases))}"
+                "records whose indices are scoped to different spaces, or to none, cannot be "
+                f"joined: {sorted(map(str, spaces))}"
             )
+        variant_space, analysis_space = next(iter(spaces))
         return Associations(
             variant_index=_cat(parts, "variant_index"),
             analysis_index=_cat(parts, "analysis_index"),
@@ -526,7 +544,8 @@ class Associations(Mapping[str, np.ndarray]):
             eaf=_cat(parts, "eaf"),
             status=_cat(parts, "status"),
             n=_cat(parts, "n") if with_n else None,
-            release_id=next(iter(releases), None),
+            variant_space=variant_space,
+            analysis_space=analysis_space,
         )
 
 

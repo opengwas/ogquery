@@ -16,7 +16,8 @@ from typing import Any, NamedTuple
 import numpy as np
 import zarr
 
-from ogquery.guard import release_id_of_group, require_release
+from ogquery.guard import ANALYSIS, IndexSpace, ReleaseIdentity, require_space
+from ogquery.manifest import group_identity
 
 #: The group a Store's data.zarr holds the Top-Hit Index in.
 TOP_HIT_GROUP = "top_hits"
@@ -199,11 +200,15 @@ class TopHitTier:
     """
 
     def __init__(
-        self, group: zarr.Group, *, release_id: str | None = None, clumps_declared: bool = False
+        self,
+        group: zarr.Group,
+        *,
+        identity: ReleaseIdentity | None = None,
+        clumps_declared: bool = False,
     ):
         #: The release this tier belongs to: its indices are scoped to it (`ogquery.guard`).
-        #: Learned from the release's manifest; `release_id=` only where none is reachable.
-        self.release_id = release_id_of_group(group) if release_id is None else release_id
+        #: Learned from the release's manifest; `identity=` only where none is reachable.
+        self.index_space = IndexSpace(group_identity(group, explicit=identity), ANALYSIS)
         self.group = group
         self._arrays: dict[str, zarr.Array | None] = {}
         # Whether the release's manifest declares this tier's Clumps (spec §2, §18.1):
@@ -250,14 +255,23 @@ class TopHitTier:
     def _read_if_present(self, name: str, bounds: tuple[int, int], dtype: str) -> np.ndarray | None:
         return self._read(name, bounds, dtype) if self.has(name) else None
 
+    def _require_space(
+        self, analysis_index: int | None, expect_space: IndexSpace | None
+    ) -> None:
+        """A cached `analysis_index` is refused unless the space it came from is named and is
+        this tier's; no index, nothing to scope."""
+        if analysis_index is not None:
+            require_space(self.index_space, expect_space, "an analysis index")
+
     def has_clumps(self) -> bool:
         """Whether the tier holds a `clumps/` group, declared or not, well formed or not."""
         return CLUMPS_GROUP in self.group
 
     def clumps(
-        self, analysis_index: int | None = None,
+        self,
+        analysis_index: int | None = None,
         *,
-        expect_release_id: str,
+        expect_space: IndexSpace | None = None,
     ) -> TierClumps | None:
         """The tier's stored Clumps, or one Analysis's slice of them; None where the release
         neither declares them nor holds a `clumps/` group (spec §18.1, *Reading*).
@@ -269,7 +283,7 @@ class TopHitTier:
         (`clumps_configuration_problem`, `clumps_array_problems`,
         `clumps_attribute_problem`). Every refusal is `MalformedClumps`.
         """
-        require_release(self.release_id, expect_release_id, "an analysis index")
+        self._require_space(analysis_index, expect_space)
         where = f"{self.group.path}/{CLUMPS_GROUP}"
         if not self.has_clumps():
             if self.clumps_declared:
@@ -311,7 +325,11 @@ class TopHitTier:
         raise MalformedClumps(f"{where}: {problem} (spec §18.1)")
 
     def read(
-        self, analysis_index: int | None = None, *, require: Iterable[str] = ()
+        self,
+        analysis_index: int | None = None,
+        *,
+        require: Iterable[str] = (),
+        expect_space: IndexSpace | None = None,
     ) -> TierRows:
         """The tier's rows, or one Analysis's slice of them.
 
@@ -321,6 +339,7 @@ class TopHitTier:
         with no `analysis_offsets` answers one Analysis by filtering its rows on
         `analysis_index`: still the pre-built tier, and no grid is read (#483).
         """
+        self._require_space(analysis_index, expect_space)
         for name in require:
             self._required(name)
         if analysis_index is not None and not self.has_offsets:
@@ -404,9 +423,9 @@ class TopHitTiers:
     """
 
     def __init__(
-        self, root: zarr.Group, *, release_id: str | None = None, clumps: Any = None
+        self, root: zarr.Group, *, identity: ReleaseIdentity | None = None, clumps: Any = None
     ):
-        self.release_id = release_id_of_group(root) if release_id is None else release_id
+        self.identity = group_identity(root, explicit=identity)
         self._root = root
         self._tiers: dict[str, TopHitTier | None] = {}
         # The release's manifest's `clumps` entry (spec §2), None where it has none: which
@@ -431,7 +450,7 @@ class TopHitTiers:
             try:
                 self._tiers[key] = TopHitTier(
                     self._root[f"{TOP_HIT_GROUP}/{key}"],
-                    release_id=self.release_id,
+                    identity=self.identity,
                     clumps_declared=declares_clumps_of(self._clumps, key),
                 )
             except KeyError:

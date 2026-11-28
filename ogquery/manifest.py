@@ -19,6 +19,7 @@ from ogquery.enums import (
     PrimaryStorageLayout,
 )
 from ogquery.format import check_format_version
+from ogquery.guard import ReleaseIdentity, ReleaseIdUnknown, identifier
 
 
 def _encoding_from_dict(data: dict[str, Any]) -> StoreEncoding:
@@ -116,8 +117,8 @@ class StoreManifest:
     def from_dict(cls, data: dict[str, Any]) -> StoreManifest:
         return cls(
             encoding=_encoding_from_dict(data),
-            store_id=str(data["store_id"]),
-            release_id=str(data["release_id"]),
+            store_id=identifier(data["store_id"], "manifest store_id"),
+            release_id=identifier(data["release_id"], "manifest release_id"),
             format_version=str(data["format_version"]),
             primary_layout=PrimaryStorageLayout(data["primary_layout"]),
             association_coverage=AssociationCoverage(data["association_coverage"]),
@@ -130,6 +131,11 @@ class StoreManifest:
             ),
             clumps=data.get("clumps"),
         )
+
+    @property
+    def identity(self) -> ReleaseIdentity:
+        """The Store and release this manifest describes."""
+        return ReleaseIdentity(self.store_id, self.release_id)
 
     @classmethod
     def load(cls, path: str | Path) -> StoreManifest:
@@ -156,3 +162,99 @@ class StoreManifest:
         if self.regions is not None:
             data["regions"] = self.regions.to_manifest()
         return data
+
+
+def release_identity(
+    directory: str | Path, *, explicit: ReleaseIdentity | None = None
+) -> ReleaseIdentity:
+    """The identity of the release in `directory`, from its `manifest.json`: the one parser
+    (`StoreManifest`). An `explicit` identity is accepted only where no manifest is there,
+    and refused where one is and says otherwise. With neither, the reader refuses."""
+    directory = Path(directory).resolve()
+    manifest_path = directory / "manifest.json"
+    if not manifest_path.is_file():
+        if explicit is None:
+            raise ReleaseIdUnknown(
+                f"cannot learn which release {str(directory)!r} is: it has no manifest.json; "
+                "pass identity= where no manifest is reachable"
+            )
+        return explicit
+    try:
+        found = _component_identity(directory, StoreManifest.load(manifest_path))
+    except ReleaseIdUnknown as error:
+        raise ReleaseIdUnknown(f"{manifest_path}: {error}") from error
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise ReleaseIdUnknown(
+            f"cannot learn which release {str(directory)!r} is: {manifest_path} is unreadable "
+            f"({type(error).__name__}: {error})"
+        ) from error
+    if explicit is not None and explicit != found:
+        raise ReleaseIdUnknown(
+            f"{manifest_path} says {found} but {explicit} was given; a manifest that is "
+            "reachable decides"
+        )
+    return found
+
+
+def group_identity(group: Any, *, explicit: ReleaseIdentity | None = None) -> ReleaseIdentity:
+    """The identity of the release whose `data.zarr` holds the Zarr `group`.
+
+    Never guessed. The store's real path (symlinks followed) must be a directory named
+    ``data.zarr`` whose parent holds a `manifest.json`, and that manifest must describe this
+    store: a release with a Ragged component (`ragged/`) is not Dense, and a Dense one has
+    none. A Zarr-only copy, or a store that is not a local ``data.zarr``, has no manifest to
+    ask, and needs `explicit`."""
+    root = getattr(group.store, "root", None)
+    if root is None:
+        if explicit is None:
+            raise ReleaseIdUnknown(
+                f"cannot learn which release the Zarr store {group.store!r} belongs to: it has "
+                "no local directory; pass identity="
+            )
+        return explicit
+    store = Path(root).resolve()
+    if store.name != "data.zarr" or not (store.parent / "manifest.json").is_file():
+        if explicit is None:
+            raise ReleaseIdUnknown(
+                f"cannot learn which release the Zarr store at {str(store)!r} belongs to: it is "
+                "not the data.zarr of a release with a manifest.json; pass identity="
+            )
+        return explicit
+    manifest = StoreManifest.load(store.parent / "manifest.json")
+    ragged = (store / "ragged").is_dir()
+    if ragged == (manifest.primary_layout is PrimaryStorageLayout.DENSE):
+        raise ReleaseIdUnknown(
+            f"{store.parent / 'manifest.json'} describes a {manifest.primary_layout.value} "
+            f"release but {store} {'has' if ragged else 'has no'} ragged/ component: it is not "
+            "this store's manifest"
+        )
+    return release_identity(store.parent, explicit=explicit)
+
+
+def release_scope(path: str | Path, manifest: StoreManifest) -> ReleaseIdentity:
+    """The identity an opened release's indices are scoped to: its manifest's, or its
+    Hybrid's where it is a Hybrid's Dense Component (`release_identity`)."""
+    return _component_identity(Path(path).resolve(), manifest)
+
+
+def _component_identity(directory: Path, manifest: StoreManifest) -> ReleaseIdentity:
+    """A release's identity, or its Hybrid's where it is a Hybrid's Dense Component.
+
+    A Dense Component is the ``dense/`` directory of a Hybrid release and has a manifest of
+    its own, with a Store id of its own, but its Analyses and panel rows are the Hybrid's:
+    an index into them is scoped to the Hybrid. It is a component only if the parent really
+    is a Hybrid's manifest and names the same release; nothing else is taken for one."""
+    parent = directory.parent / "manifest.json"
+    if directory.name != "dense" or not parent.is_file():
+        return manifest.identity
+    try:
+        hybrid = StoreManifest.load(parent)
+    except (OSError, ValueError, KeyError, TypeError):
+        return manifest.identity
+    if (
+        hybrid.primary_layout is PrimaryStorageLayout.HYBRID
+        and manifest.primary_layout is PrimaryStorageLayout.DENSE
+        and hybrid.release_id == manifest.release_id
+    ):
+        return hybrid.identity
+    return manifest.identity

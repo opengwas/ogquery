@@ -21,6 +21,16 @@ from ogquery.associations.record import (
 )
 from ogquery.encoding.plan import StoreEncoding
 from ogquery.encoding.planes import DenseEafPlane, DenseSePlane, DenseZPlane
+from ogquery.guard import (
+    ANALYSIS,
+    VARIANT,
+    CellSpaces,
+    IndexSpace,
+    ReleaseIdentity,
+    ReleaseIdUnknown,
+    require_cells,
+)
+from ogquery.manifest import group_identity
 
 
 class _Grid(NamedTuple):
@@ -67,7 +77,18 @@ class DenseGridReader:
         *,
         source: str,
         requires_mask: bool | None = None,
+        variant_space: IndexSpace | None = None,
+        identity: ReleaseIdentity | None = None,
     ) -> None:
+        #: What the cells are numbered in. The columns are the release's Analyses. The rows are
+        #: its own variant axis unless the caller says they are another (`variant_space`: a
+        #: Hybrid's Dense Component reads panel rows); either way its release is the one whose
+        #: manifest describes this group.
+        found = group_identity(group, explicit=identity)
+        rows = IndexSpace(found, VARIANT) if variant_space is None else variant_space
+        if rows.identity != found:
+            raise ReleaseIdUnknown(f"{source}: rows of {rows.identity} cannot be read from {found}")
+        self.spaces = CellSpaces(rows, IndexSpace(found, ANALYSIS))
         self._group = group
         self._encoding = encoding
         self._source = source
@@ -89,12 +110,21 @@ class DenseGridReader:
         *,
         source: str = "Dense grid",
         requires_mask: bool | None = None,
+        variant_space: IndexSpace | None = None,
+        identity: ReleaseIdentity | None = None,
     ) -> DenseGridReader:
         """A Reference-Completed grid without its imputed mask is refused rather than
         read as all-observed (spec §15). Whether the grid is completed is the
         group's own `completion_state` record unless the caller says
         (`requires_mask`); a grid that records none is refused."""
-        return cls(group, encoding, source=source, requires_mask=requires_mask)
+        return cls(
+            group,
+            encoding,
+            source=source,
+            requires_mask=requires_mask,
+            variant_space=variant_space,
+            identity=identity,
+        )
 
     @property
     def n_variants(self) -> int:
@@ -176,8 +206,11 @@ class DenseGridReader:
             )
         return z
 
-    def read(self, cells: Cells, *, observed_only: bool = False) -> Associations:
+    def read(
+        self, cells: Cells, *, observed_only: bool = False, expect_spaces: CellSpaces
+    ) -> Associations:
         """The region's associations; raises `InvalidAssociations` on a §15-invalid cell."""
+        require_cells(self.spaces, expect_spaces, "the cells")
         grid = self._decode(cells)
         state = classify(grid.z, grid.se, grid.flags)
         if np.any(state > State.IMPUTED):
@@ -195,10 +228,13 @@ class DenseGridReader:
             self._values(grid, grid.se, keep),
             self._values(grid, grid.eaf, keep),
             self._values(grid, state, keep),
+            variant_space=self.spaces.variant,
+            analysis_space=self.spaces.analysis,
         )
 
-    def inspect(self, cells: Cells) -> Inspection:
+    def inspect(self, cells: Cells, *, expect_spaces: CellSpaces) -> Inspection:
         """Every cell of the region, decoded and classified; never raises on one."""
+        require_cells(self.spaces, expect_spaces, "the cells")
         grid = self._decode(cells)
         every = np.ones(np.shape(grid.z), dtype=bool)
         rows, cols = self._coordinates(grid, every)
@@ -214,9 +250,7 @@ class DenseGridReader:
     # ── decoding ────────────────────────────────────────────────────────────
 
     def _decode(self, cells: Cells) -> _Grid:
-        require_within(
-            cells, self._source, n_analyses=self.n_analyses, n_variants=self.n_variants
-        )
+        require_within(cells, self._source, n_analyses=self.n_analyses, n_variants=self.n_variants)
         decode = {
             "analysis": self._analysis,
             "analyses": self._analyses,

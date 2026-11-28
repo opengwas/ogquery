@@ -65,22 +65,33 @@ def swapped(path: Path, a: int = 0, b: int = 1) -> Any:
         if not whole:
             return {name: values[order] for name, values in answer.items()}
         both = np.ix_(order, order)
-        return {"analysis_id": answer["analysis_id"][order], "rho": answer["rho"][both],
-                "n_null": answer["n_null"][both]}
+        return {
+            "analysis_id": answer["analysis_id"][order],
+            "rho": answer["rho"][both],
+            "n_null": answer["n_null"][both],
+        }
 
     def rho_row(self: Any, analysis_id: str) -> dict[str, np.ndarray]:
         return renumbered(base.rho_row(self, analysis_id), False)
 
     def rho_matrix(self: Any, ids: Any = None) -> dict[str, np.ndarray]:
         answer = base.rho_matrix(self, ids)
-        return answer if ids is not None or not len(answer["analysis_id"]) else renumbered(
-            answer, True
+        return (
+            answer
+            if ids is not None or not len(answer["analysis_id"])
+            else renumbered(answer, True)
         )
 
     namespace: dict[str, Any] = {
         name: associations(name)
-        for name in ("analysis", "phewas", "range_phewas", "lookup", "top_hits",
-                     "range_by_analysis")
+        for name in (
+            "analysis",
+            "phewas",
+            "range_phewas",
+            "lookup",
+            "top_hits",
+            "range_by_analysis",
+        )
         if hasattr(base, name)
     }
     namespace.update(analyses_table=analyses_table, resolve=resolve)
@@ -122,7 +133,8 @@ def canonical(found: Associations) -> Associations:
 def test_a_release_projected_onto_itself_answers_as_it_does_unprojected(name: str) -> None:
     """Every answer but an association answer's row order is the unprojected digest, and
     an association answer is the unprojected rows in `(variant_index, analysis_index)`
-    order. `top_hits/limit` truncates in that order, so only its rows are compared."""
+    order. `top_hits/limit` is the native *unlimited* answer in that order, then limited
+    (the native `limit=3` follows the facade's own, analysis-major order: ADR 0109 §8b)."""
     path = RELEASES / name
     projected, plain = own_projected_answers(name), plain_answers(name)
     asked = 0
@@ -132,7 +144,17 @@ def test_a_release_projected_onto_itself_answers_as_it_does_unprojected(name: st
                 answer = question.ask()
             except question.refusals as refused:
                 answer = refused
-            if not isinstance(answer, Associations) or question.name.startswith("top_hits/limit"):
+            limited = question.name.startswith("top_hits/limit")
+            if limited and not isinstance(answer, Exception):
+                unlimited = q.top_hits(
+                    threshold=0.2, observed_only=question.name.endswith("observed_only")
+                )
+                answer = canonical(unlimited).head(digests.TOP_HITS_LIMIT)
+                assert len(answer["z"]) == digests.TOP_HITS_LIMIT, "the limit is exercised"
+            if limited and isinstance(answer, Exception):
+                assert projected["shapes"][question.name] == digests.refusal_digest(answer)
+                continue
+            if not isinstance(answer, Associations):
                 continue
             asked += 1
             section = projected[question.section][question.name]
@@ -141,8 +163,15 @@ def test_a_release_projected_onto_itself_answers_as_it_does_unprojected(name: st
             assert section == expected, (question.section, question.name)
     assert asked > 20
     for key in plain:
-        if key in ("shapes", "alid_probes", "misses", "range_probes", "indexed_subsets",
-                   "resolved", *digests.VALUES):
+        if key in (
+            "shapes",
+            "alid_probes",
+            "misses",
+            "range_probes",
+            "indexed_subsets",
+            "resolved",
+            *digests.VALUES,
+        ):
             continue  # association answers, compared above, and what is derived from them
         assert projected[key] == plain[key], key
 
@@ -187,8 +216,9 @@ def test_two_swapped_analyses_answer_differently_without_it(name: str) -> None:
 def test_an_analysis_the_release_does_not_hold_is_refused_not_answered_empty() -> None:
     path = RELEASES / "ragged_completed"
     reference = reference_for(path)
-    wider = replace(reference, ids=[*reference.ids, "dropped"],
-                    analyses={**reference.analyses, "dropped": 7})
+    wider = replace(
+        reference, ids=[*reference.ids, "dropped"], analyses={**reference.analyses, "dropped": 7}
+    )
     found = answers(path, reference=wider)
     refusal = found["refusals"]["unheld/dropped"]
     with digests.open_query(path) as q, pytest.raises(UnknownAnalysisError) as raised:
@@ -197,11 +227,13 @@ def test_an_analysis_the_release_does_not_hold_is_refused_not_answered_empty() -
     assert set(refusal) == {"error"}, "a refusal digests as an error, not as arrays"
     empty = digests.result_digests(dict(Associations.empty()))
     assert refusal != empty
-    assert found["shapes"]["analysis/a/all"] == answers(path, reference=reference)["shapes"][
-        "analysis/a/all"
-    ], "the Analyses it holds are still answered"
-    assert not any("dropped" in name for section in ("shapes", "alid_probes", "rho")
-                   for name in found[section])
+    assert (
+        found["shapes"]["analysis/a/all"]
+        == answers(path, reference=reference)["shapes"]["analysis/a/all"]
+    ), "the Analyses it holds are still answered"
+    assert not any(
+        "dropped" in name for section in ("shapes", "alid_probes", "rho") for name in found[section]
+    )
 
 
 # ── 4. a limit cannot hide a displaced hit ───────────────────────────────────
@@ -233,3 +265,68 @@ def test_a_limit_does_not_hide_a_hit_another_analysis_displaced() -> None:
     expected_digest = digests.result_digests(dict(limited))
     del expected_digest[digests.PVAL]
     assert found == expected_digest
+
+
+# ── review fixes: every missing key, the stamp of a projection, decoded arrays ──
+
+
+def test_every_analysis_the_release_does_not_hold_is_refused_not_only_the_sampled() -> None:
+    """`Reference.ids` is a spread of eight; a dropped key outside it is probed too."""
+    path = RELEASES / "ragged_completed"
+    reference = reference_for(path)
+    unsampled = replace(reference, analyses={**reference.analyses, "unsampled_drop": 9})
+    assert "unsampled_drop" not in unsampled.ids
+    refused = answers(path, reference=unsampled)["refusals"]["unheld/unsampled_drop"]
+    assert set(refused) == {"error"}
+
+
+def test_a_projected_record_is_stamped_with_the_reference_not_the_releases_own() -> None:
+    path = RELEASES / "ragged_completed"
+    reference = reference_for(path)
+    assert reference.variant_space is not None
+    with digests.open_query(path) as q:
+        projector = digests._Projector(reference, q.variants_table(), q.analyses_table())
+        native = q.analysis("a")
+        projected, own = projector.associations(native, None)
+    assert projected.variant_space == reference.variant_space
+    assert projected.analysis_space == reference.analysis_space
+    assert own.variant_space == native.variant_space, "the rows kept for `resolve` keep theirs"
+
+
+def test_a_projected_record_does_not_keep_a_stamp_from_the_space_it_left() -> None:
+    other = reference_for(RELEASES / "dense_completed")
+    path = RELEASES / "ragged_completed"
+    with digests.open_query(path) as q:
+        projector = digests._Projector(
+            replace(
+                other, variants=reference_for(path).variants, analyses=reference_for(path).analyses
+            ),
+            q.variants_table(),
+            q.analyses_table(),
+        )
+        projected, _ = projector.associations(q.analysis("a"), None)
+    assert projected.variant_space == other.variant_space != q.variant_space
+
+
+@pytest.mark.parametrize("name", SWAPPED)
+def test_projected_arrays_of_a_swapped_release_equal_the_originals_exactly(name: str) -> None:
+    path = RELEASES / name
+    reference = reference_for(path)
+    ours = digests.projected_arrays(path, reference)
+    theirs = digests.projected_arrays(path, reference, query=lambda p: swapped(p))
+    assert digests.array_differences(ours, theirs) == []
+    assert any("z" in found for found in ours["shapes"].values() if isinstance(found, dict))
+
+
+def test_projected_arrays_compare_eaf_within_a_tolerance_and_everything_else_exactly() -> None:
+    path = RELEASES / "ragged_completed"
+    reference = reference_for(path)
+    ours = digests.projected_arrays(path, reference)
+    name = "analysis/a/all"
+    arrays = dict(ours["shapes"][name])
+    assert np.isfinite(arrays["eaf"]).any()
+    nudged = {**ours, "shapes": {**ours["shapes"], name: {**arrays, "eaf": arrays["eaf"] + 1e-3}}}
+    assert digests.array_differences(ours, nudged, eaf_tolerance=2e-3) == []
+    assert digests.array_differences(ours, nudged) == [f"shapes/{name}/eaf"]
+    moved = {**ours, "shapes": {**ours["shapes"], name: {**arrays, "z": arrays["z"] + 1e-3}}}
+    assert digests.array_differences(ours, moved, eaf_tolerance=1.0) == [f"shapes/{name}/z"]

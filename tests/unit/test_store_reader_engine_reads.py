@@ -18,6 +18,7 @@ import zarr
 from ogquery.alid import RSID_DTYPE
 from ogquery.alid_sidecar import write_alid_sidecar
 from ogquery.format import CURRENT_FORMAT_VERSION
+from ogquery.guard import ReleaseIdentity
 from ogquery.position_sidecar import write_position_sidecar
 from ogquery.release import release_arrays
 from ogquery.source_alid_sidecar import write_source_alid_sidecar
@@ -86,7 +87,8 @@ def _axis(
     np.save(tmp_path / "variant_rsid_bytes.npy", np.empty(0, dtype=RSID_DTYPE))
     np.save(tmp_path / "variant_rsid_rows.npy", np.empty(0, dtype="int32"))
     table = _Table(rows)
-    return VariantAxis(tmp_path, table, format_version=version, release_id="r1"), table
+    identity = ReleaseIdentity("s", "r1")
+    return VariantAxis(tmp_path, table, format_version=version, identity=identity), table
 
 
 def _row(index: int, source_alid: str | None) -> str:

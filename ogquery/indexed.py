@@ -43,7 +43,7 @@ from ogquery.encoding.codec import (
 from ogquery.encoding.plan import StoreEncoding, UnsupportedEncoding
 from ogquery.enums import CompletionState, PrimaryStorageLayout
 from ogquery.format import zarr_format_for_version
-from ogquery.guard import require_release
+from ogquery.guard import ANALYSIS, IndexSpace, ReleaseIdentity, require_space
 from ogquery.hybrid import dense_component_path
 from ogquery.layout import (
     INDEXED_SUBSET_CHUNK,
@@ -239,21 +239,26 @@ class IndexedSubset:
     _group: Any = field(repr=False, compare=False)
 
     @property
-    def release_id(self) -> str:
-        """The release this subset indexes: its source's, which opening it checked."""
-        return self.source_release_id
+    def identity(self) -> ReleaseIdentity:
+        """The Store and release this subset indexes: its source's, which opening it checked."""
+        return ReleaseIdentity(self.source_store_id, self.source_release_id)
+
+    @property
+    def index_space(self) -> IndexSpace:
+        """What its `analysis_index` argument numbers: its source release's Analyses."""
+        return IndexSpace(self.identity, ANALYSIS)
 
     def decode_analysis(
         self, analysis_index: int,
         *,
-        expect_release_id: str,
+        expect_space: IndexSpace,
     ) -> IndexedSubsetAnalysis:
         """Decode one Analysis's Z, SE and (when present) EAF columns.
 
         This is the read seam #265 builds the query fast path on: the returned
         values are what the primary planes decode to at the same variants.
         """
-        require_release(self.release_id, expect_release_id, "an analysis index")
+        require_space(self.index_space, expect_space, "an analysis index")
         if not 0 <= analysis_index < self.n_analyses:
             raise IndexedSubsetError(
                 f"store {self.store_path}: Indexed Variant Subset {self.name!r}: "

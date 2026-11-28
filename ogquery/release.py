@@ -36,7 +36,7 @@ from ogquery.arrays import open_group
 from ogquery.enums import PrimaryStorageLayout
 from ogquery.format import LAST_0_2_FORMAT_VERSION, carries_variant_offsets, check_format_version
 from ogquery.hybrid import DENSE_TO_SHARED_FILENAME, shared_axis_root
-from ogquery.manifest import StoreManifest
+from ogquery.manifest import StoreManifest, release_scope
 from ogquery.panel_axis import AnyVariantAxis, PanelVariantAxis
 from ogquery.top_hits import TopHitTiers
 from ogquery.variant_axis import (
@@ -210,7 +210,7 @@ class StoreRelease(ReleasePaths):
         None), knowing which tier's Clumps its manifest declares (spec §2, §18.1)."""
         return TopHitTiers(
             self.arrays() if root is None else root,
-            release_id=self.manifest.release_id,
+            identity=release_scope(self.path, self.manifest),
             clumps=self.manifest.clumps,
         )
 

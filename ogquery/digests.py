@@ -83,6 +83,7 @@ import numpy as np
 
 from ogquery.analyses import UnknownAnalysisError
 from ogquery.associations import Associations
+from ogquery.guard import IndexSpace, ReleaseIdentity
 from ogquery.identity import VariantNormalisationError
 from ogquery.indexed import list_indexed_subsets
 from ogquery.rho import OverflowOnlyAnalysisError
@@ -307,6 +308,10 @@ class Reference:
     first: dict[str, Any]
     last: dict[str, Any]
     narrowed: dict[str, Any] | None = None
+    #: What the reference's own indices are scoped to: the numbering a projected answer's
+    #: `variant_index` and `analysis_index` are in, which they are stamped with.
+    variant_space: IndexSpace | None = None
+    analysis_space: IndexSpace | None = None
 
     def to_json(self) -> dict[str, Any]:
         """The reference as JSON holds it, so a proof can carry it across processes: every
@@ -321,6 +326,8 @@ class Reference:
             "first": dict(self.first),
             "last": dict(self.last),
             "narrowed": self.narrowed,
+            "variant_space": _space_json(self.variant_space),
+            "analysis_space": _space_json(self.analysis_space),
         }
 
     @classmethod
@@ -339,7 +346,23 @@ class Reference:
             first=dict(data["first"]),
             last=dict(data["last"]),
             narrowed=None if data["narrowed"] is None else dict(data["narrowed"]),
+            variant_space=_space_from_json(data["variant_space"]),
+            analysis_space=_space_from_json(data["analysis_space"]),
         )
+
+
+def _space_json(space: IndexSpace | None) -> dict[str, str] | None:
+    return None if space is None else {
+        "store_id": space.identity.store_id,
+        "release_id": space.identity.release_id,
+        "space": space.space,
+    }
+
+
+def _space_from_json(data: Mapping[str, str] | None) -> IndexSpace | None:
+    if data is None:
+        return None
+    return IndexSpace(ReleaseIdentity(data["store_id"], data["release_id"]), data["space"])
 
 
 def reference_of(q: Any, variants: dict[int, dict[str, Any]] | None = None) -> Reference:
@@ -360,6 +383,8 @@ def reference_of(q: Any, variants: dict[int, dict[str, Any]] | None = None) -> R
         first=records[0],
         last=_range_last(records, len(analyses)),
         narrowed=narrowed,
+        variant_space=q.variant_space,
+        analysis_space=q.analysis_space,
     )
 
 
@@ -432,7 +457,13 @@ class _Projector:
         keep = np.flatnonzero((vi >= 0) & (ai >= 0))
         order = keep[np.lexsort((ai[keep], vi[keep]))]
         own = answer.take(order)
-        projected = replace(own, variant_index=vi[order], analysis_index=ai[order])
+        projected = replace(
+            own,
+            variant_index=vi[order],
+            analysis_index=ai[order],
+            variant_space=self.reference.variant_space,
+            analysis_space=self.reference.analysis_space,
+        )
         return projected.head(limit), own.head(limit)
 
     def rho(self, name: str, answer: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
@@ -751,7 +782,8 @@ def questions(
     for name, ask in refusal_questions(q).items():
         yield Question("refusals", name, ask, REFUSAL_ERRORS)
     if reference is not None:
-        for a in (a for a in asked.ids if a not in ids):
+        held = set(ids) | {r["analysis_id"] for r in q.analyses_table().values()}
+        for a in sorted(set(asked.analyses) - held):
             yield Question(
                 "refusals", f"unheld/{a}", partial(q.analysis, a), (UnknownAnalysisError,)
             )
@@ -924,7 +956,16 @@ def release_answers(
     reference's numbering and order, and an Analysis the release does not hold is
     refused (``refusals``). Two releases, one spliced from the other, then answer
     comparably. A release asked its own `reference_of` answers as it would unprojected,
-    with every answer's rows in `(variant_index, analysis_index)` order."""
+    with every answer's rows in `(variant_index, analysis_index)` order.
+
+    **Order.** A projected association answer is in that canonical order by design (ADR
+    0109 §8b), not the facade's: the facade lists a Ragged or Hybrid release's hits Analysis by
+    Analysis, which an index renumbering would reorder. So `top_hits/limit`, asked without a
+    limit, is the unlimited answer in canonical order, cut to `TOP_HITS_LIMIT` rows after the
+    projection. Its rows can differ from the same release's unprojected `limit=3`, whose
+    selection follows the facade's order. Projected of itself equals the unlimited native
+    answer in canonical order, limited. Every digest the projection produces is stamped with
+    the reference's index spaces, never the release's own."""
     with _open(path, query) as q:
         own_variants = q.variants_table()
         variants, analyses = own_variants, q.analyses_table()
@@ -986,6 +1027,94 @@ def release_digests(
         path, query=query, readable=False, reference=reference
     )["digests"]
     return digests
+
+
+def projected_arrays(
+    path: str | Path, reference: Reference, *, query: QueryOpener | None = None
+) -> dict[str, dict[str, Any]]:
+    """The decoded, projected answers themselves, before any hashing: the numbers a splice
+    proof compares (ADR 0109 §8b), exactly, or `eaf` within the release's step
+    (`array_differences`).
+
+    Asked and projected exactly as `release_answers` does with `reference`, and returned by
+    section and question: an association answer as its arrays (`variant_index`,
+    `analysis_index`, `z`, `se`, `beta`, `pval`, `eaf`, `association_status`, and `n` where
+    it has one), in the reference's numbering and canonical order; a Rho answer as its
+    arrays; a variant-only read as its rows keyed by the reference's `variant_index`; a
+    count as a one-element array; a refusal as the exception itself, whose type and message
+    are its answer. `release_digests` is unchanged and digests the same answers."""
+    with _open(path, query) as q:
+        own_variants, own_analyses = q.variants_table(), q.analyses_table()
+        projector = _Projector(reference, own_variants, own_analyses)
+        found: dict[str, dict[str, Any]] = {section: {} for section in SECTIONS}
+        for question, answer, _ in _walk(q, own_variants, path, reference, projector):
+            found[question.section][question.name] = _arrays_of(answer)
+    return found
+
+
+def _arrays_of(answer: Any) -> Any:
+    if isinstance(answer, Associations):
+        return {name: np.asarray(values) for name, values in answer.items()}
+    if isinstance(answer, int):
+        return {"count": np.asarray([answer], dtype="int64")}
+    return answer
+
+
+def array_differences(
+    reference: Mapping[str, Mapping[str, Any]],
+    candidate: Mapping[str, Mapping[str, Any]],
+    *,
+    eaf_tolerance: float = 0.0,
+) -> list[str]:
+    """Where two `projected_arrays` disagree, as ``section/question/array``; none if equal.
+
+    Every array is compared as the decoded numbers it holds, NaN at the same place equal:
+    exactly, except `eaf`, which may differ by `eaf_tolerance` (ADR 0109 §5: the sum of both
+    releases' steps). A refusal is compared by type and message, a row table by its rows.
+    The sections and questions of the two must be the same."""
+    out: list[str] = []
+    for section in sorted(set(reference) | set(candidate)):
+        ours, theirs = reference.get(section, {}), candidate.get(section, {})
+        for name in sorted(set(ours) | set(theirs)):
+            if name not in ours or name not in theirs:
+                out.append(f"{section}/{name}")
+                continue
+            out += [
+                f"{section}/{name}/{field}"
+                for field in _array_fields_differing(ours[name], theirs[name], eaf_tolerance)
+            ]
+    return out
+
+
+def _array_fields_differing(ours: Any, theirs: Any, eaf_tolerance: float) -> list[str]:
+    if isinstance(ours, Exception) or isinstance(theirs, Exception):
+        same = (
+            isinstance(ours, Exception)
+            and isinstance(theirs, Exception)
+            and (type(ours), str(ours)) == (type(theirs), str(theirs))
+        )
+        return [] if same else ["error"]
+    if not (_is_arrays(ours) and _is_arrays(theirs)):
+        return [] if repr(ours) == repr(theirs) else ["rows"]
+    out = []
+    for field in sorted(set(ours) | set(theirs)):
+        if field not in ours or field not in theirs:
+            out.append(field)
+            continue
+        a, b = np.asarray(ours[field]), np.asarray(theirs[field])
+        tolerance = eaf_tolerance if field == "eaf" else 0.0
+        if a.shape != b.shape or not _arrays_agree(a, b, tolerance):
+            out.append(field)
+    return out
+
+
+def _arrays_agree(a: np.ndarray, b: np.ndarray, tolerance: float) -> bool:
+    if a.dtype.kind == "f" and b.dtype.kind == "f":
+        nan = np.isnan(a)
+        if not np.array_equal(nan, np.isnan(b)):
+            return False
+        return bool(np.all(np.abs(a[~nan].astype("float64") - b[~nan]) <= tolerance))
+    return bool(np.array_equal(a, b))
 
 
 #: How many of each answer's first rows `readable_answer` spells out.
@@ -1231,6 +1360,8 @@ __all__ = [
     "release_answers",
     "Reference",
     "reference_of",
+    "array_differences",
+    "projected_arrays",
     "release_digests",
     "result_digests",
     "unposed_range_questions",

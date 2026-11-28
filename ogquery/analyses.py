@@ -16,6 +16,9 @@ from collections.abc import ItemsView, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from ogquery.guard import ANALYSIS, IndexSpace, ReleaseIdentity
+from ogquery.manifest import release_identity
+
 
 class UnknownAnalysisError(ValueError):
     """A query named an `analysis_id` the Store Release does not hold.
@@ -89,7 +92,16 @@ class AnalysesIndex:
     `StoreRelease.analyses_path`, #472).
     """
 
-    def __init__(self, store_path: str | Path, *, table: str | Path | None = None):
+    def __init__(
+        self,
+        store_path: str | Path,
+        *,
+        table: str | Path | None = None,
+        identity: ReleaseIdentity | None = None,
+    ):
+        self._store_path = Path(store_path)
+        self._identity = identity
+        self._index_space: IndexSpace | None = None
         path = Path(table) if table is not None else Path(store_path) / "analyses.tsv"
         rows = read_analyses(path).rows
         self._by_id: dict[str, dict[str, str]] = {}
@@ -97,6 +109,15 @@ class AnalysesIndex:
         for row in rows:
             self._by_id[row["analysis_id"]] = row
             self._by_index[int(row["analysis_index"])] = row
+
+    @property
+    def index_space(self) -> IndexSpace:
+        """What `analysis_index` numbers: this release's Analyses (`ogquery.guard`), learned
+        from its manifest on first use, and refused where there is none to learn it from."""
+        if self._index_space is None:
+            found = release_identity(self._store_path, explicit=self._identity)
+            self._index_space = IndexSpace(found, ANALYSIS)
+        return self._index_space
 
     def by_id(self, analysis_id: str) -> dict[str, str] | None:
         return self._by_id.get(analysis_id)

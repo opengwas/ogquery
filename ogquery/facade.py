@@ -90,12 +90,14 @@ from ogquery.associations import (
 from ogquery.csr import RaggedCSRReader
 from ogquery.enums import CompletionState, PrimaryStorageLayout
 from ogquery.format import carries_variant_aliases
+from ogquery.guard import IndexSpace
 from ogquery.hybrid import dense_to_shared_path, panel_rows
 from ogquery.indexed import (
     IndexedSubsetError,
     IndexedSubsetLayoutError,
     rescope_indexed_subset_error,
 )
+from ogquery.manifest import release_identity
 from ogquery.panel_axis import AnyVariantAxis, PanelVariantAxis
 from ogquery.release import StoreRelease
 from ogquery.resolve import resolve_rows
@@ -120,22 +122,25 @@ def _ragged_tier_record(
     the sequence holds no mask, which an opened reader allows only on a
     component that is observed by construction (`CsrReader`'s `requires_mask`).
     """
-    rows = tier.read(analysis_index, require=("se",))
+    rows = tier.read(analysis_index, require=("se",), expect_space=tier.index_space)
     assert rows.se is not None
     vi, ai = rows.variant_index, rows.analysis_index
-    eaf = rows.eaf if rows.eaf is not None else csr.eaf_pairs(vi, ai)
+    eaf = rows.eaf if rows.eaf is not None else csr.eaf_pairs(vi, ai, expect_spaces=csr.spaces)
     imputed = rows.imputed
     if imputed is None and csr.has_imputed:
         imputed = csr.imputed_at(_tier_positions(csr, vi, ai, source))
-    return Associations.from_decoded(
+    found = Associations.from_decoded(
         vi,
         ai,
         rows.z,
         rows.se,
         eaf,
         imputed,
-        csr.n_pairs(vi, ai) if with_n else None,
+        csr.n_pairs(vi, ai, expect_spaces=csr.spaces) if with_n else None,
         source=source,
+    )
+    return replace(
+        found, variant_space=csr.spaces.variant, analysis_space=csr.spaces.analysis
     )
 
 
@@ -143,7 +148,9 @@ def _tier_positions(
     csr: RaggedCSRReader, variant_index: np.ndarray, analysis_index: np.ndarray, source: str
 ) -> np.ndarray:
     """Each tier hit's flat CSR position; a hit the sequence does not hold is refused."""
-    slots, positions = csr.pair_positions(variant_index, analysis_index)
+    slots, positions = csr.pair_positions(
+        variant_index, analysis_index, expect_spaces=csr.spaces
+    )
     if len(slots) != len(variant_index):
         raise LookupError(
             f"{source}: {len(variant_index) - len(slots):,} top hit(s) name a cell the "
@@ -191,7 +198,7 @@ def _rho_pairs(reader: DenseRhoReader, resolved: list[tuple[str, int]]) -> dict[
             aid_b, idx_b = resolved[y]
             if idx_a == idx_b:
                 continue
-            r, n = reader.pair(idx_a, idx_b, expect_release_id=reader.release_id)
+            r, n = reader.pair(idx_a, idx_b, expect_space=reader.index_space)
             out_a.append(aid_a)
             out_b.append(aid_b)
             out_rho.append(r)
@@ -227,7 +234,7 @@ def _rho_row_answer(
     """`rho_row()`'s answer for the Analysis at `idx`, against every other but `leave_out`."""
     if reader is None:
         return _empty_rho_row_result()
-    rho_vals, n_vals = reader.row(idx, expect_release_id=reader.release_id)
+    rho_vals, n_vals = reader.row(idx, expect_space=reader.index_space)
     others = [i for i in range(reader.n_analyses) if i != idx and i not in leave_out]
     return {
         "analysis_id": np.array([id_by_index[i]["analysis_id"] for i in others], dtype=object),
@@ -253,7 +260,7 @@ def _rho_matrix_answer(
             if i not in leave_out
         ]
     rho_mat, n_mat = reader.matrix(
-        [idx for _, idx in resolved], expect_release_id=reader.release_id
+        [idx for _, idx in resolved], expect_space=reader.index_space
     )
     return {
         "analysis_id": np.array([aid for aid, _ in resolved], dtype=object),
@@ -276,7 +283,7 @@ def _variant_rows(variant_axis: AnyVariantAxis, rows: np.ndarray) -> dict[int, d
     """The `variants_table()` rows for `rows` alone, keyed by variant_index, ascending:
     the axis's one projection of a row (`rows_by_indices`), so a 0.3.0 release answers
     from its sidecars, `source_alid` included (#470), and no second index is built."""
-    return variant_axis.rows_by_indices(rows, expect_release_id=variant_axis.release_id)
+    return variant_axis.rows_by_indices(rows, expect_space=variant_axis.index_space)
 
 
 def _is_completed(store: StoreRelease) -> bool:
@@ -332,18 +339,19 @@ def _ragged_top_hits(
     positions = _scan_csr_hits(reader, region, threshold)
     if len(positions) == 0:
         return Associations.empty(with_n=with_n)
-    return reader.read(Cells.positions(positions), observed_only=observed_only)
-
+    return reader.read(
+        Cells.positions(positions), observed_only=observed_only, expect_spaces=reader.spaces
+    )
 
 
 def _stamped[F: Callable[..., Any]](read: F) -> F:
-    """A query method whose `Associations` answer is stamped with the facade's `release_id`
-    (`ogquery.guard`): the release its indices are scoped to."""
+    """A query method whose `Associations` answer is stamped with the facade's index spaces
+    (`ogquery.guard`): the spaces its indices are scoped to."""
 
     @wraps(read)
     def stamped(self: Any, *args: Any, **kwargs: Any) -> Associations:
         found: Associations = read(self, *args, **kwargs)
-        return replace(found, release_id=self.release_id)
+        return replace(found, variant_space=self.variant_space, analysis_space=self.analysis_space)
 
     return cast(F, stamped)
 
@@ -358,11 +366,20 @@ class _StoreQueryBase:
     _variant_axis: AnyVariantAxis
 
     @property
+    def variant_space(self) -> IndexSpace:
+        """What this facade's `variant_index` numbers: the Store, release and axis (a
+        Hybrid's shared axis; its Dense Component's panel rows are another). What an entry
+        point's `expect_space=` is checked against (`ogquery.guard`)."""
+        return self._variant_axis.index_space
+
+    @property
+    def analysis_space(self) -> IndexSpace:
+        """What this facade's `analysis_index` numbers: the release's Analyses."""
+        return self._analyses.index_space
+
+    @property
     def release_id(self) -> str:
-        """The release this facade reads: what its answers' indices are scoped to, and
-        what `expect_release_id=` of an entry point that takes an index is checked against
-        (`ogquery.guard`)."""
-        return self._variant_axis.release_id
+        return self.variant_space.release_id
 
     def close(self) -> None:
         """Close the facade. Its Variant Axis closes too, letting go of every memory map
@@ -475,11 +492,10 @@ class StoreQuery(_StoreQueryBase):
             store.manifest.encoding,
             source=f"Dense Store Release {store.path}",
             requires_mask=_is_completed(store),
+            variant_space=self._variant_axis.index_space,
         )
         self._rho_reader: DenseRhoReader | None = (
-            DenseRhoReader(
-                self._root["rho"], self._grid.n_analyses, release_id=self._variant_axis.release_id
-            )
+            DenseRhoReader(self._root["rho"], self._grid.n_analyses)
             if "rho" in self._root
             else None
         )
@@ -513,11 +529,11 @@ class StoreQuery(_StoreQueryBase):
         invalid subset raises rather than falling back to the slow path.
         """
         if indexed_subset is not None:
-            return self._indexed_analysis(
-                analysis_id, indexed_subset, observed_only=observed_only
-            )
+            return self._indexed_analysis(analysis_id, indexed_subset, observed_only=observed_only)
         col = self._analysis_index(analysis_id)
-        return self._grid.read(Cells.analysis(col), observed_only=observed_only)
+        return self._grid.read(
+            Cells.analysis(col), observed_only=observed_only, expect_spaces=self._grid.spaces
+        )
 
     def _indexed_analysis(
         self, analysis_id: str, subset_name: str, *, observed_only: bool
@@ -531,9 +547,13 @@ class StoreQuery(_StoreQueryBase):
         not excuse the selector.  A *valid* subset with an unknown Analysis ID
         raises `UnknownAnalysisError`, as the ordinary read does.
         """
-        subset = SubsetReader.open(self.store.path, subset_name)
+        subset = SubsetReader.open(
+            self.store.path, subset_name, variant_space=self._variant_axis.index_space
+        )
         col = self._analysis_index(analysis_id)
-        return subset.read(Cells.analysis(col), observed_only=observed_only)
+        return subset.read(
+            Cells.analysis(col), observed_only=observed_only, expect_spaces=subset.spaces
+        )
 
     @_stamped
     def phewas(self, identifier: str, *, observed_only: bool = False) -> Associations:
@@ -548,7 +568,11 @@ class StoreQuery(_StoreQueryBase):
 
         What a Hybrid asks of its Dense Component, after naming the panel row itself.
         """
-        return self._grid.read(Cells.variants([variant_index]), observed_only=observed_only)
+        return self._grid.read(
+            Cells.variants([variant_index]),
+            observed_only=observed_only,
+            expect_spaces=self._grid.spaces,
+        )
 
     @_stamped
     def range_phewas(
@@ -566,7 +590,9 @@ class StoreQuery(_StoreQueryBase):
         """
         if len(rows) == 0:
             return Associations.empty()
-        return self._grid.read(Cells.variants(rows), observed_only=observed_only)
+        return self._grid.read(
+            Cells.variants(rows), observed_only=observed_only, expect_spaces=self._grid.spaces
+        )
 
     @_stamped
     def lookup(
@@ -594,12 +620,18 @@ class StoreQuery(_StoreQueryBase):
             return Associations.empty()
         # Surgical orthogonal read: only the chunks intersecting the requested
         # rows × cols, not the full analysis width per row (issue 052).
-        return self._grid.read(Cells.cross(rows, cols), observed_only=observed_only)
+        return self._grid.read(
+            Cells.cross(rows, cols), observed_only=observed_only, expect_spaces=self._grid.spaces
+        )
 
     @_stamped
     def top_hits(
-        self, *, analysis_id: str | None = None, threshold: float = 5e-8,
-        limit: int | None = None, observed_only: bool = False,
+        self,
+        *,
+        analysis_id: str | None = None,
+        threshold: float = 5e-8,
+        limit: int | None = None,
+        observed_only: bool = False,
     ) -> Associations:
         """Return genomic-order top hits, optionally for one analysis.
 
@@ -611,7 +643,7 @@ class StoreQuery(_StoreQueryBase):
         """
         analysis_index = self._optional_analysis_index(analysis_id)
         tier = self._top_hits.require(threshold)
-        record = self._top_hit_record(tier.read(analysis_index))
+        record = self._top_hit_record(tier.read(analysis_index, expect_space=tier.index_space))
         return record.observed_only(observed_only).head(limit)
 
     def _top_hit_record(self, rows: TierRows) -> Associations:
@@ -624,11 +656,14 @@ class StoreQuery(_StoreQueryBase):
         """
         se, eaf, imputed = rows.se, rows.eaf, rows.imputed
         if se is None or eaf is None or (imputed is None and self._grid.has_imputed):
-            cells = self._grid.inspect(Cells.pairs(rows.variant_index, rows.analysis_index))
+            cells = self._grid.inspect(
+                Cells.pairs(rows.variant_index, rows.analysis_index),
+                expect_spaces=self._grid.spaces,
+            )
             se = cells.se if se is None else se
             eaf = cells.eaf if eaf is None else eaf
             imputed = cells.flags if imputed is None else imputed
-        return Associations.from_decoded(
+        found = Associations.from_decoded(
             rows.variant_index,
             rows.analysis_index,
             rows.z,
@@ -636,6 +671,11 @@ class StoreQuery(_StoreQueryBase):
             eaf,
             imputed,
             source=f"Top-Hit Index of {self.store.path}",
+        )
+        return replace(
+            found,
+            variant_space=self._grid.spaces.variant,
+            analysis_space=self._grid.spaces.analysis,
         )
 
     def rho(self, *ids: str) -> dict[str, np.ndarray]:
@@ -712,7 +752,6 @@ class RaggedStoreQuery(_StoreQueryBase):
     def close(self) -> None:
         self._variant_axis.close()
 
-
     @_stamped
     def analysis(
         self,
@@ -730,7 +769,9 @@ class RaggedStoreQuery(_StoreQueryBase):
         if indexed_subset is not None:
             _refuse_indexed_subset(self.store.path, "Ragged", indexed_subset)
         idx = self._analysis_index(analysis_id)
-        return self._reader.read(Cells.analysis(idx), observed_only=observed_only)
+        return self._reader.read(
+            Cells.analysis(idx), observed_only=observed_only, expect_spaces=self._reader.spaces
+        )
 
     @_stamped
     def range_phewas(
@@ -744,7 +785,11 @@ class RaggedStoreQuery(_StoreQueryBase):
         variant_indices = self._variant_axis.range_indices(chromosome, start, end)
         if len(variant_indices) == 0:
             return self._empty()
-        return self._reader.read(Cells.variants(variant_indices), observed_only=observed_only)
+        return self._reader.read(
+            Cells.variants(variant_indices),
+            observed_only=observed_only,
+            expect_spaces=self._reader.spaces,
+        )
 
     def _analysis_indices_in_range(self, chromosome: str, start: int, end: int) -> list[int]:
         """Analysis indices whose Trait position falls in [start, end] --
@@ -767,7 +812,11 @@ class RaggedStoreQuery(_StoreQueryBase):
         analysis_indices = self._analysis_indices_in_range(chromosome, start, end)
         if not analysis_indices:
             return self._empty()
-        return self._reader.read(Cells.analyses(analysis_indices), observed_only=observed_only)
+        return self._reader.read(
+            Cells.analyses(analysis_indices),
+            observed_only=observed_only,
+            expect_spaces=self._reader.spaces,
+        )
 
     @_stamped
     def phewas(self, identifier: str, *, observed_only: bool = False) -> Associations:
@@ -775,12 +824,18 @@ class RaggedStoreQuery(_StoreQueryBase):
         index = self._variant_axis.index_of(identifier)
         if index is None:
             return self._empty()
-        return self._reader.read(Cells.variants([index]), observed_only=observed_only)
+        return self._reader.read(
+            Cells.variants([index]), observed_only=observed_only, expect_spaces=self._reader.spaces
+        )
 
     @_stamped
     def top_hits(
-        self, *, analysis_id: str | None = None, threshold: float = 5e-8,
-        limit: int | None = None, observed_only: bool = False,
+        self,
+        *,
+        analysis_id: str | None = None,
+        threshold: float = 5e-8,
+        limit: int | None = None,
+        observed_only: bool = False,
     ) -> Associations:
         """Associations passing a significance threshold, in genomic order
         (analysis_index, then variant_index) -- the "analysis_index,
@@ -823,7 +878,11 @@ class RaggedStoreQuery(_StoreQueryBase):
         if not len(found):
             return self._empty()
         wanted = np.array(sorted({int(i) for i in found}), dtype=np.int32)
-        return self._reader.read(Cells.cross(wanted, analyses), observed_only=observed_only)
+        return self._reader.read(
+            Cells.cross(wanted, analyses),
+            observed_only=observed_only,
+            expect_spaces=self._reader.spaces,
+        )
 
 
 class HybridStoreQuery(_StoreQueryBase):
@@ -840,6 +899,13 @@ class HybridStoreQuery(_StoreQueryBase):
     def __init__(self, store: StoreRelease):
         self.store = store
         self._dense_store = store.dense_component()
+        if release_identity(self._dense_store.path) != store.manifest.identity:
+            raise ValueError(
+                f"the Dense Component at {self._dense_store.path} is "
+                f"{release_identity(self._dense_store.path)}, not the Hybrid's "
+                f"{store.manifest.identity}: its Analysis indices would be a different "
+                "release's"
+            )
         self._dense_to_shared = np.load(dense_to_shared_path(store.path)).astype("int32")
         # The Overflow at store/data.zarr/ragged.
         # The Overflow is observed by construction (ADR 0026): it never carries an
@@ -903,9 +969,7 @@ class HybridStoreQuery(_StoreQueryBase):
 
     def rho_row(self, analysis_id: str) -> dict[str, np.ndarray]:
         ((_, idx),) = self._rho_resolved([analysis_id])
-        return _rho_row_answer(
-            self._rho_reader, idx, self._analyses.all(), self._rho_leave_out()
-        )
+        return _rho_row_answer(self._rho_reader, idx, self._analyses.all(), self._rho_leave_out())
 
     def rho_matrix(self, ids: list[str] | None = None) -> dict[str, np.ndarray]:
         resolved = None if ids is None else self._rho_resolved(ids)
@@ -916,7 +980,9 @@ class HybridStoreQuery(_StoreQueryBase):
     # ── dispatch helpers ─────────────────────────────────────────────────────
     def _remap_dense(self, result: Associations) -> Associations:
         """A Dense Component result with its panel-local variant_index made shared."""
-        return result.remap_variants(self._dense_to_shared)
+        return result.remap_variants(
+            self._dense_to_shared, variant_space=self._variant_axis.index_space
+        )
 
     def _panel_split(self, shared_indices: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """`(on_panel, rows)` for shared variant indices (`hybrid.panel_rows`, the one
@@ -925,7 +991,9 @@ class HybridStoreQuery(_StoreQueryBase):
 
     def _overflow_read(self, cells: Cells, *, observed_only: bool) -> Associations:
         """The Overflow's rows for a region, without the `n` a Hybrid never reports."""
-        return self._overflow.read(cells, observed_only=observed_only)
+        return self._overflow.read(
+            cells, observed_only=observed_only, expect_spaces=self._overflow.spaces
+        )
 
     # ── public query surface ─────────────────────────────────────────────────
     @_stamped
@@ -1023,8 +1091,12 @@ class HybridStoreQuery(_StoreQueryBase):
 
     @_stamped
     def top_hits(
-        self, *, analysis_id: str | None = None, threshold: float = 5e-8,
-        limit: int | None = None, observed_only: bool = False,
+        self,
+        *,
+        analysis_id: str | None = None,
+        threshold: float = 5e-8,
+        limit: int | None = None,
+        observed_only: bool = False,
     ) -> Associations:
         """Genomic-order top hits of both components, at a stored tier only.
 

@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 import zarr
 
+from ogquery.guard import ReleaseIdentity
 from ogquery.manifest import StoreManifest
 from ogquery.release import open_release
 from ogquery.top_hits import (
@@ -48,7 +49,7 @@ def _build(path: Path) -> zarr.Group:
 
 
 def _tier(root: zarr.Group, clumps: Any = DECLARATION) -> TopHitTier:
-    tier = TopHitTiers(root, clumps=clumps, release_id="r1").tier(5e-8)
+    tier = TopHitTiers(root, clumps=clumps, identity=ReleaseIdentity("s", "r1")).tier(5e-8)
     assert tier is not None
     return tier
 
@@ -63,18 +64,18 @@ def test_a_declared_tier_reads_its_clumps_and_one_analysis_reads_its_slice(
 ) -> None:
     tier = _tier(root)
     assert tier.has_clumps() and tier.clumps_declared
-    whole = tier.clumps(expect_release_id=tier.release_id)
+    whole = tier.clumps(expect_space=tier.index_space)
     assert isinstance(whole, TierClumps)
     assert whole.lead.dtype == np.int32 and whole.r.dtype == np.int16
     assert whole.lead.tolist() == [0, -1, 0, 1, -2] and whole.r.tolist() == [10, 0, -5, 7, 0]
     for index in range(len(OFFSETS) - 1):
-        part = tier.clumps(index, expect_release_id=tier.release_id)
+        part = tier.clumps(index, expect_space=tier.index_space)
         assert part is not None
         a, b = OFFSETS[index], OFFSETS[index + 1]
         assert part.lead.tolist() == whole.lead[a:b].tolist()
         assert part.r.tolist() == whole.r[a:b].tolist()
         assert part.attribute == whole.attribute
-    empty = tier.clumps(1, expect_release_id=tier.release_id)
+    empty = tier.clumps(1, expect_space=tier.index_space)
     assert empty is not None and len(empty.lead) == 0
 
 
@@ -84,7 +85,7 @@ def test_a_tier_without_clumps_and_without_a_declaration_reads_none(tmp_path: Pa
     tier.create_array("z", data=np.zeros(3, dtype=np.float32))
     opened = _tier(group, None)
     assert not opened.has_clumps() and not opened.clumps_declared
-    assert opened.clumps(expect_release_id=opened.release_id) is None
+    assert opened.clumps(expect_space=opened.index_space) is None
 
 
 def test_the_manifest_reads_its_clumps_entry_and_never_writes_it() -> None:
@@ -151,9 +152,9 @@ def test_each_malformed_or_undeclared_group_is_refused_by_name(
     declaration = corrupt(root)
     tier = _tier(root, declaration)
     with pytest.raises(MalformedClumps, match=named):
-        tier.clumps(expect_release_id=tier.release_id)
+        tier.clumps(expect_space=tier.index_space)
     with pytest.raises(MalformedClumps, match=named):
-        tier.clumps(0, expect_release_id=tier.release_id)
+        tier.clumps(0, expect_space=tier.index_space)
 
 
 def test_a_manifest_reads_its_clumps_entry_and_never_writes_it() -> None:
@@ -192,7 +193,7 @@ def declared_release(tmp_path: Path) -> Path:
 def test_a_release_reads_the_clumps_its_manifest_declares(declared_release: Path) -> None:
     tier = open_release(declared_release).top_hit_tiers().tier(5e-8)
     assert tier is not None and tier.clumps_declared
-    clumps = tier.clumps(expect_release_id=tier.release_id)
+    clumps = tier.clumps(expect_space=tier.index_space)
     assert clumps is not None
     assert clumps.attribute == {key: 7 for key in sorted(CLUMPS_ATTRIBUTE_KEYS)}
     assert clumps.r.tolist() == list(range(len(clumps.r))) and (clumps.lead == -1).all()
@@ -207,7 +208,7 @@ def test_a_release_whose_manifest_does_not_declare_its_clumps_refuses_them(
     tier = open_release(declared_release).top_hit_tiers().tier(5e-8)
     assert tier is not None
     with pytest.raises(MalformedClumps, match="not declared by the release's manifest"):
-        tier.clumps(expect_release_id=tier.release_id)
+        tier.clumps(expect_space=tier.index_space)
 
 
 # ── a group, array or scalar where §18.1 says the other ──────────────────────
@@ -243,4 +244,4 @@ def test_a_member_of_the_wrong_kind_is_refused_by_name(
 ) -> None:
     tier = _tier(root, corrupt(root))
     with pytest.raises(MalformedClumps, match=named):
-        tier.clumps(expect_release_id=tier.release_id)
+        tier.clumps(expect_space=tier.index_space)

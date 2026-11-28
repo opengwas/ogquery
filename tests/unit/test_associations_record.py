@@ -124,7 +124,7 @@ def test_derived_records_keep_columns_in_lockstep() -> None:
     ordered = record.in_genomic_order()
     assert ordered["variant_index"].tolist() == [1, 4, 7]
     assert ordered["association_status"].tolist() == ["missing", "observed", "imputed"]
-    remapped = record.remap_variants(np.arange(10) * 10)
+    remapped = record.remap_variants(np.arange(10) * 10, variant_space=None)
     assert remapped["variant_index"].tolist() == [40, 10, 70]
 
 

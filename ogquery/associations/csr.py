@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import replace
 from operator import itemgetter
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from ogquery.associations.record import (
 from ogquery.by_variant import ByVariantReader, VariantIndexError, has_variant_index
 from ogquery.csr import RAGGED_ZARR_PATH, RaggedCSRReader
 from ogquery.encoding.plan import StoreEncoding
+from ogquery.guard import CellSpaces, require_cells
 from ogquery.manifest import StoreManifest
 
 #: A by-variant index decode's columns, in `Inspection.of`'s order.
@@ -127,6 +129,11 @@ class CsrReader:
         )
 
     @property
+    def spaces(self) -> CellSpaces:
+        """What this reader's cells are numbered in: its release's variant axis and Analyses."""
+        return self.structure.spaces
+
+    @property
     def carries_n(self) -> bool:
         return self.structure.has_n
 
@@ -207,26 +214,33 @@ class CsrReader:
             )
         return z
 
-    def read(self, cells: Cells, *, observed_only: bool = False) -> Associations:
+    def read(
+        self, cells: Cells, *, observed_only: bool = False, expect_spaces: CellSpaces
+    ) -> Associations:
         """The region's rows; raises `InvalidAssociations` on a §15-invalid one."""
-        return self.inspect(cells).associations(self._source).observed_only(observed_only)
+        require_cells(self.spaces, expect_spaces, "the cells")
+        found = self.inspect(cells, expect_spaces=expect_spaces).associations(self._source)
+        return replace(
+            found.observed_only(observed_only),
+            variant_space=self.spaces.variant,
+            analysis_space=self.spaces.analysis,
+        )
 
-    def inspect(self, cells: Cells) -> Inspection:
+    def inspect(self, cells: Cells, *, expect_spaces: CellSpaces) -> Inspection:
         """Every row of the region, decoded and classified; never raises on one.
 
         A region naming an index outside its axis is refused (`require_within`).
         A CSR records no variant axis of its own, so a region naming variants is
         read only once `open_variant_index` has given it one.
         """
+        require_cells(self.spaces, expect_spaces, "the cells")
         if cells.vi is not None and self._n_variants is None:
             raise VariantIndexError(
                 f"{self._source}: a region naming variants is checked against the "
                 "variant axis the by-variant index is opened on; open the variant "
                 "index first"
             )
-        require_within(
-            cells, self._source, n_analyses=self.n_analyses, n_variants=self._n_variants
-        )
+        require_within(cells, self._source, n_analyses=self.n_analyses, n_variants=self._n_variants)
         decode = {
             "analysis": self._analyses,
             "analyses": self._analyses,
@@ -280,7 +294,7 @@ class CsrReader:
 
     def _analysis(self, analysis_index: int) -> Inspection:
         csr = self.structure
-        start, end = csr.span(analysis_index)
+        start, end = csr.span(analysis_index, expect_space=csr.spaces.analysis)
         if start == end:
             return self._empty()
         variants = csr.variant_index(start, end)
@@ -306,7 +320,7 @@ class CsrReader:
         low, high = int(wanted.min()), int(wanted.max())
         # One variant reads its two offsets in one call; a range reads its ends.
         first, last = (
-            self._by_variant.rows_for_variant(low)
+            self._by_variant.rows_for_variant(low, expect_space=self._by_variant.index_space)
             if low == high
             else self._by_variant.rows_for_variant_range(low, high)
         )
@@ -347,12 +361,17 @@ class CsrReader:
     def _cross_positions(self, variants: np.ndarray, analyses: np.ndarray) -> np.ndarray:
         wanted = np.unique(variants).astype(np.int32)
         found = [
-            self.structure.segment_positions(wanted, analysis_index=int(a)) for a in analyses
+            self.structure.segment_positions(
+                wanted, analysis_index=int(a), expect_spaces=self.spaces
+            )
+            for a in analyses
         ]
         return np.concatenate(found) if found else np.empty(0, dtype=np.int64)
 
     def _pair_positions(self, variants: np.ndarray, analyses: np.ndarray) -> np.ndarray:
-        slots, positions = self.structure.pair_positions(variants, analyses)
+        slots, positions = self.structure.pair_positions(
+            variants, analyses, expect_spaces=self.spaces
+        )
         if len(slots) != len(variants):
             raise LookupError(
                 f"{self._source}: {len(variants) - len(slots):,} requested (variant, Analysis) "
@@ -381,4 +400,3 @@ class CsrReader:
             csr.n_at(unique) if self.carries_n else None,
         )
         return found if np.array_equal(unique, positions) else found.take(back)
-

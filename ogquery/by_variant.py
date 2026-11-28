@@ -27,7 +27,8 @@ from ogquery.encoding.codec import (
     positions_flat,
 )
 from ogquery.encoding.plan import EafBaselineError, StoreEncoding
-from ogquery.manifest import StoreManifest
+from ogquery.guard import VARIANT, IndexSpace, ReleaseIdentity, require_space
+from ogquery.manifest import StoreManifest, release_identity
 from ogquery.stored import optional_array
 
 #: The index group, under the Ragged component's own group (ADR 0060).
@@ -63,7 +64,10 @@ class ByVariantReader:
         encoding: StoreEncoding | None = None,
         *,
         n_axis: int | None = None,
+        identity: ReleaseIdentity | None = None,
     ):
+        #: The variant axis this index is over: its release's, learned from its manifest.
+        self.index_space = IndexSpace(release_identity(store_path, explicit=identity), VARIANT)
         self._ragged = store_arrays.open_group(Path(store_path) / RAGGED_ZARR_PATH)
         if BY_VARIANT_GROUP not in self._ragged:
             raise ValueError(
@@ -187,13 +191,14 @@ class ByVariantReader:
     def n_rows(self) -> int:
         return array_length(self._analysis_index)
 
-    def rows_for_variant(self, variant_index: int) -> tuple[int, int]:
+    def rows_for_variant(self, variant_index: int, *, expect_space: IndexSpace) -> tuple[int, int]:
         """The half-open row range one variant's associations occupy.
 
         A variant the index does not cover (a Hybrid's on-panel variants) has an
         empty range, so the caller returns no rows rather than falling back to a
         scan -- the index *is* the answer for every variant it indexes.
         """
+        require_space(self.index_space, expect_space, "a variant index")
         variant = int(variant_index)
         if variant < 0 or variant >= self.n_axis:
             raise ValueError(
@@ -209,8 +214,8 @@ class ByVariantReader:
         every row between their offsets belongs to a variant in `[low, high]`,
         because the index is variant-ordered.
         """
-        first, _ = self.rows_for_variant(low)
-        _, last = self.rows_for_variant(high)
+        first, _ = self.rows_for_variant(low, expect_space=self.index_space)
+        _, last = self.rows_for_variant(high, expect_space=self.index_space)
         return first, last
 
     def decode(
