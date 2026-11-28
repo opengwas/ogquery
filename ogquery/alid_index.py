@@ -28,7 +28,8 @@ import numpy as np
 
 from ogquery.alid import ALID_DTYPE, is_indexable_alid
 from ogquery.alid_sidecar import ABSENT, AlidSidecar
-from ogquery.format import carries_alid_sidecar
+from ogquery.cpra_sidecar import CpraSidecar
+from ogquery.format import carries_alid_sidecar, carries_cpra
 from ogquery.guard import IndexSpace, SpaceBound
 from ogquery.npy_sidecar import invert_rows, open_pair_or_none
 
@@ -189,7 +190,7 @@ class FixedWidthAlidIndex(SpaceBound):
 
 
 #: The ALID indexes a release can carry, newest first.
-ALID_INDEX_KINDS: tuple[AlidIndexKind, ...] = (AlidSidecar, FixedWidthAlidIndex)
+ALID_INDEX_KINDS: tuple[AlidIndexKind, ...] = (CpraSidecar, AlidSidecar, FixedWidthAlidIndex)
 
 #: Every file any ALID index is stored in.
 ALID_INDEX_FILENAMES: frozenset[str] = frozenset(
@@ -198,7 +199,12 @@ ALID_INDEX_FILENAMES: frozenset[str] = frozenset(
 
 
 def alid_index_kind(format_version: str) -> AlidIndexKind:
-    """The ALID index a release of `format_version` carries (spec §1, §4): the one key."""
+    """The ALID index a release of `format_version` carries (spec §1, §4): the one key.
+
+    From 0.4.0 it is the CPRA sidecar, the ALID sidecar's layout under `variant_cpra_*`
+    names (spec §21.5): a release is read by its series, never by which files exist."""
+    if carries_cpra(format_version):
+        return CpraSidecar
     return AlidSidecar if carries_alid_sidecar(format_version) else FixedWidthAlidIndex
 
 
@@ -212,8 +218,9 @@ def open_alid_index(store_path: str | Path, format_version: str) -> AlidIndex:
     kind = alid_index_kind(format_version)
     opened = kind.open(store_path)
     if opened is None:
+        name = "CPRA" if carries_cpra(format_version) else "ALID"
         raise MissingAlidIndex(
-            f"{store_path}: format_version {format_version} carries an ALID index in "
+            f"{store_path}: format_version {format_version} carries a {name} index in "
             f"{', '.join(kind.FILENAMES)}, which is missing; the release is incomplete. "
             "Rebuild it, or rewrite it from an intact source (spec §1, §4)"
         )

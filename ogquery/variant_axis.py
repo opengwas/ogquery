@@ -33,7 +33,7 @@ axis asks a `LegacyVariantTable` for those reads, and opengwasdb supplies one
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -44,16 +44,28 @@ import numpy as np
 from ogquery.alid import ParsedAlid, parse_canonical_alid
 from ogquery.alid_index import ABSENT, UNINDEXED, AlidIndex, open_alid_index
 from ogquery.alid_sidecar import AlidSidecar
+from ogquery.cpra_query import (
+    INDEL_ABSENT,
+    SWAPPED_ALLELES,
+    ParsedCpra,
+    VariantMiss,
+    is_rsid,
+    parse_cpra,
+)
+from ogquery.cpra_sidecar import SourceCpraSidecar
 from ogquery.format import (
+    CpraNormalForm,
+    carries_cpra,
     carries_position_sidecar,
     carries_source_alid_sidecar,
     carries_variant_aliases,
     carries_variant_offsets,
+    cpra_normal_form,
 )
 from ogquery.guard import IndexSpace, ReleaseIdentity, require_space
 from ogquery.hybrid import DenseComponentSharesAxis, shared_axis_root
 from ogquery.identity import normalise_chromosome
-from ogquery.manifest import release_spaces
+from ogquery.manifest import StoreManifest, release_spaces
 from ogquery.npy_sidecar import WINDOW_ROWS, release_maps
 from ogquery.position_sidecar import MissingPositionSidecar, PositionSidecar
 from ogquery.rsid_index import (
@@ -61,6 +73,7 @@ from ogquery.rsid_index import (
     VARIANT_RSID_ROWS_FILENAME,
     MissingRsidIndex,
     RsidIndex,
+    RsidIndexNotYetSupported,
 )
 from ogquery.source_alid_sidecar import (
     MissingSourceAlidSidecar,
@@ -164,6 +177,51 @@ RECORD_FIELDS = (
 )
 
 
+#: A 0.4.0 `CpraVariantRecord`'s fields, in order: the Variant Table's (spec §4.0), where
+#: `ref`, `alt`, `cpra` and `source_cpra` stand where 0.3's `effect_allele`, `other_allele`,
+#: `alid` and `source_alid` stood, and the table's `variant_index` and `cpra` columns are
+#: placed as the table places them (a `variants_table()` row is every field but the first).
+CPRA_RECORD_FIELDS = (
+    "variant_index",
+    "chromosome",
+    "position",
+    "ref",
+    "alt",
+    "cpra",
+    "rsid",
+    "source_cpra",
+)
+
+
+@dataclass(frozen=True)
+class CpraVariantRecord(Mapping[str, Any]):
+    """One 0.4.0 variant, named by its CPRA, REF and ALT (spec §4.0): no `effect_allele`, as
+    the effect allele of every statistic is ALT."""
+
+    variant_index: int
+    chromosome: str
+    position: int
+    ref: str
+    alt: str
+    #: ``chromosome:position:ref:alt``, the row's key.
+    cpra: str
+    #: None where the row has no rsID.
+    rsid: str | None
+    #: The source's own locus, `chrom:pos:R:A` (spec §4.0); None for a row no source observed.
+    source_cpra: str | None = None
+
+    def __getitem__(self, key: str) -> Any:
+        if key not in CPRA_RECORD_FIELDS:
+            raise KeyError(key)
+        return getattr(self, key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(CPRA_RECORD_FIELDS)
+
+    def __len__(self) -> int:
+        return len(CPRA_RECORD_FIELDS)
+
+
 @dataclass(frozen=True)
 class VariantRecord(Mapping[str, Any]):
     """One Store Variant Table row."""
@@ -193,6 +251,20 @@ class VariantRecord(Mapping[str, Any]):
 
     def __len__(self) -> int:
         return len(RECORD_FIELDS)
+
+
+#: A Variant Axis's record: 0.3 and earlier name a variant by ALID, 0.4.0 by CPRA.
+AnyVariantRecord = VariantRecord | CpraVariantRecord
+
+
+@dataclass(frozen=True)
+class IdentifierResolution:
+    """The rows a list of identifiers names, and why any named none (`VariantMiss`)."""
+
+    indices: np.ndarray
+    #: One per identifier asked, in the order asked, for the misses spec §4.0 says are
+    #: never bare. Always empty on a release before 0.4.0.
+    misses: tuple[VariantMiss, ...] = ()
 
 
 def variant_table_path(store_path: str | Path) -> Path:
@@ -259,6 +331,13 @@ class VariantAxis:
         )
         self._reads_table = self._offsets is not None
         self._legacy = legacy
+        #: Whether the release is of the 0.4 series: keyed by CPRA, signed for ALT. Read
+        #: from its `format_version`, never from which files exist (spec §21.5).
+        self._cpra = carries_cpra(format_version)
+        self._form: CpraNormalForm | None = None
+        if self._cpra:
+            # Refused here, not at the first read, where the manifest's entry is not 0.4.0's.
+            self._form = cpra_normal_form(StoreManifest.load(self.store_path))
         # The ALID index the release's `format_version` carries, and no other
         # (`open_alid_index`): format 0.3.0's sidecar or the 0.2 series' fixed-width pair.
         # A release missing it is refused here, never read by scanning the table.
@@ -282,20 +361,50 @@ class VariantAxis:
         require_source_alid_sidecar_files(self.store_path, format_version)
         self._position_sidecar: PositionSidecar | None = None
         self._source_alid_sidecar: SourceAlidSidecar | None = None
+        # 0.4.0's rsID index and alias index are #524's, whose layout is not decided: a
+        # 0.4.0 axis opens none, and refuses every rsID read (`RsidIndexNotYetSupported`).
         # The rsID index (`rsid_index`), present on stores built after issue #109.
         # Absent on older 0.2 stores, where rsid lookups find nothing (as they did
         # before that index existed). On 0.3.0 it is also how a row's rsID is named,
         # so a 0.3.0 release without it is refused rather than read as naming none.
-        self._rsid_index = RsidIndex.open(self.store_path)
+        self._rsid_index = None if self._cpra else RsidIndex.open(self.store_path)
         if self._rsid_index is not None:
             self._rsid_index.bind(self.index_space)
-        if self._rsid_index is None and not self.reads_table:
+        if self._rsid_index is None and not self.reads_table and not self._cpra:
             raise MissingRsidIndex(
                 f"{self.store_path}: format_version {format_version} names each row's rsID "
                 f"from {VARIANT_RSID_BYTES_FILENAME} and {VARIANT_RSID_ROWS_FILENAME}, which "
                 "are missing; "
                 "the release is incomplete. Rebuild it (spec §1, §4)"
             )
+
+    @property
+    def keys_are_cpra(self) -> bool:
+        """Whether this release is keyed by CPRA (0.4.0), not by ALID."""
+        return self._cpra
+
+    @property
+    def cpra_normal_form(self) -> CpraNormalForm:
+        """The form this release's keys and signs take (spec §21.2): its manifest's entry
+        from 0.4.0, derived from its stamp before."""
+        if self._form is None:
+            self._form = cpra_normal_form(StoreManifest.load(self.store_path))
+        return self._form
+
+    @property
+    def identity_columns(self) -> tuple[str, ...]:
+        """The identity columns a resolved row carries, in order: `chromosome`, `position`,
+        `ref`, `alt`, `cpra` from 0.4.0; `chromosome`, `position`, `alid`, `effect_allele`,
+        `other_allele` before."""
+        if self._cpra:
+            return ("chromosome", "position", "ref", "alt", "cpra")
+        return ("chromosome", "position", "alid", "effect_allele", "other_allele")
+
+    @property
+    def source_column(self) -> str:
+        """The name of the column naming a row's source locus: `source_cpra` from 0.4.0,
+        `source_alid` before."""
+        return "source_cpra" if self._cpra else "source_alid"
 
     @property
     def n_variants(self) -> int:
@@ -337,7 +446,9 @@ class VariantAxis:
         on the 0.2 series. One whose offsets cannot slice its bytes is refused
         (`source_alid_sidecar.MalformedSourceAlidSidecar`)."""
         if not self.reads_table and self._source_alid_sidecar is None:
-            self._source_alid_sidecar = SourceAlidSidecar.open(self.store_path)
+            self._source_alid_sidecar = source_sidecar_kind(self._format_version).open(
+                self.store_path
+            )
             if self._source_alid_sidecar is None:  # removed since this axis was opened
                 raise MissingSourceAlidSidecar(
                     f"{self.store_path}: the source_alid sidecar is gone"
@@ -346,7 +457,8 @@ class VariantAxis:
         return self._source_alid_sidecar
 
     def _sources(self) -> SourceAlidSidecar:
-        """The `source_alid` sidecar of a 0.3.0 axis (`source_alid_sidecar`)."""
+        """The `source_alid` sidecar of a 0.3.0 axis, or the `source_cpra` sidecar of a
+        0.4.0 one (`source_alid_sidecar`)."""
         sidecar = self.source_alid_sidecar
         assert sidecar is not None, "a 0.3.0 axis is refused without one"
         return sidecar
@@ -358,7 +470,7 @@ class VariantAxis:
         self._legacy.close()
         release_maps(self)
 
-    def by_identifier(self, identifier: str) -> VariantRecord | None:
+    def by_identifier(self, identifier: str) -> AnyVariantRecord | None:
         """Resolve one ALID or rsid to a single Store Variant Table row.
 
         An rsid can legitimately name several rows -- a multi-allelic site, or
@@ -370,7 +482,7 @@ class VariantAxis:
         A caller that needs only the row's index wants `index_of`, which reads
         no Variant Table row.
         """
-        parsed = parse_canonical_alid(identifier)
+        parsed = None if self._cpra else parse_canonical_alid(identifier)
         if parsed is not None:
             return self.by_alid(parsed)
         index = self.index_of(identifier)
@@ -395,6 +507,8 @@ class VariantAxis:
         # An identifier too long to encode was never indexed (see
         # `_write_rsid_index`), so a truncated query could only ever produce a
         # false match for a different variant: `rows_of` asks no such name.
+        if self._cpra:
+            raise RsidIndexNotYetSupported("an rsID query")
         if self._rsid_index is None:
             return np.empty(0, dtype="int32")
         return self._rsid_index.rows_of(alias)
@@ -418,10 +532,33 @@ class VariantAxis:
         asked. A Dense `lookup` keeps this order; a Ragged or Hybrid `lookup`
         returns its associations in row order whatever it was asked.
         """
+        return self.resolve_identifiers(identifiers).indices
+
+    def resolve_identifiers(self, identifiers: Sequence[str]) -> IdentifierResolution:
+        """`indices_by_identifiers`, and the diagnostics of the misses that are never bare.
+
+        On a 0.4.0 release (spec §4.0) a CPRA that is not normal by shape is refused
+        (`NotNormalCpra`) before any row is looked for, and an absent SNV or substitution
+        whose swapped spelling names a row, or an absent indel, is a `VariantMiss`, one per
+        identifier asked, in the order asked. An absent rsID, and an absent SNV whose swap
+        names no row, give none. A release before 0.4.0 has no such miss.
+        """
+        if self._cpra:
+            return self._resolve_cpras(identifiers)
         parsed_pairs, alias_identifiers = _split_identifiers(identifiers)
         indices = self._indices_of_alids(parsed_pairs)
         indices.extend(self._indices_of_aliases(alias_identifiers))
-        return np.array(indices, dtype="int32")
+        return IdentifierResolution(np.array(indices, dtype="int32"))
+
+    def _resolve_cpras(self, identifiers: Sequence[str]) -> IdentifierResolution:
+        return resolve_cpra_identifiers(
+            self._alid_index,
+            identifiers,
+            release_id=self.identity.release_id,
+            form=self.cpra_normal_form,
+            space=self.index_space,
+            aliases=self._indices_of_aliases,
+        )
 
     def _indices_of_alids(self, parsed_pairs: list[tuple[str, ParsedAlid]]) -> list[int]:
         """The rows the ALIDs name, in the order asked: the ALID index first, the exact
@@ -465,23 +602,24 @@ class VariantAxis:
                 indices.append(index)
         return indices
 
-    def by_alid(self, parsed: ParsedAlid) -> VariantRecord | None:
+    def by_alid(self, parsed: ParsedAlid) -> AnyVariantRecord | None:
         row = int(self._alid_index.search([_canonical(parsed)])[0])
         if row == UNINDEXED:
             return self._scanned_record(parsed)
         return None if row == ABSENT else self.by_index(row, expect_space=self.index_space)
 
-    def _scanned_record(self, parsed: ParsedAlid) -> VariantRecord | None:
+    def _scanned_record(self, parsed: ParsedAlid) -> AnyVariantRecord | None:
         """The exact scan of the table at the ALID's position, for one the index lacks."""
         for record in self.range(parsed.chromosome, parsed.position, parsed.position):
             if (
-                record.effect_allele == parsed.effect_allele
+                isinstance(record, VariantRecord)
+                and record.effect_allele == parsed.effect_allele
                 and record.other_allele == parsed.other_allele
             ):
                 return record
         return None
 
-    def range(self, chromosome: str, start: int, end: int) -> list[VariantRecord]:
+    def range(self, chromosome: str, start: int, end: int) -> list[AnyVariantRecord]:
         """The rows at a position in ``[start, end]`` on `chromosome`, in row order, every
         column of each.
 
@@ -495,7 +633,7 @@ class VariantAxis:
         records = self.by_indices(rows.tolist(), expect_space=self.index_space)
         return [records[int(row)] for row in rows]
 
-    def tabix_range(self, chromosome: str, start: int, end: int) -> list[VariantRecord]:
+    def tabix_range(self, chromosome: str, start: int, end: int) -> list[AnyVariantRecord]:
         """`range`, read through the Variant Table's tabix index on any format.
 
         A 0.2 release's ranges are this. The validator asks it of a 0.3.0 release
@@ -503,7 +641,7 @@ class VariantAxis:
         """
         chrom = normalise_chromosome(chromosome)
         lines = self._legacy.fetch(chrom, max(0, int(start) - 1), int(end))
-        return [parse_variant_line(line) for line in lines]
+        return [parse_variant_line(line, cpra=self._cpra) for line in lines]
 
     def range_indices(self, chromosome: str, start: int, end: int) -> np.ndarray:
         """The Variant Indices at a position in ``[start, end]`` on `chromosome`, ascending,
@@ -527,7 +665,7 @@ class VariantAxis:
             indices.append(int(fields[2]))
         return np.array(indices, dtype="int32")
 
-    def by_index(self, variant_index: int, *, expect_space: IndexSpace) -> VariantRecord | None:
+    def by_index(self, variant_index: int, *, expect_space: IndexSpace) -> AnyVariantRecord | None:
         """Row `variant_index`, every column of it; None outside the axis.
 
         On 0.3.0 from the sidecars (`sidecar_records`), the table unread. The 0.2 series
@@ -543,14 +681,16 @@ class VariantAxis:
             return record
         assert self._offsets is not None, "a release that reads its table has its offsets"
         line = self._legacy.line_at(int(self._offsets[int(variant_index)]))
-        record = parse_variant_line(line)
+        record = parse_variant_line(line, cpra=self._cpra)
         if record.variant_index != variant_index:
             raise ValueError(
                 f"variant offset for row {variant_index} points to row {record.variant_index}"
             )
         return record
 
-    def sidecar_records(self, rows: np.ndarray, *, expect_space: IndexSpace) -> list[VariantRecord]:
+    def sidecar_records(
+        self, rows: np.ndarray, *, expect_space: IndexSpace
+    ) -> list[AnyVariantRecord]:
         """The 0.3.0 rows `rows`, every column, named by the sidecars alone, in `rows`'
         order: identity from the ALID sidecar, rsID from the rsID index, `source_alid`
         from the `source_alid` sidecar. Every row must be in the axis."""
@@ -560,6 +700,20 @@ class VariantAxis:
         rsids = self.rsids_by_indices(rows, expect_space=self.index_space)
         sources = self.source_alids_by_indices(rows, expect_space=self.index_space)
         positions = identity["position"].tolist()
+        if self._cpra:
+            return [
+                CpraVariantRecord(
+                    variant_index=row,
+                    chromosome=identity["chromosome"][k],
+                    position=positions[k],
+                    ref=identity["ref"][k],
+                    alt=identity["alt"][k],
+                    cpra=identity["cpra"][k],
+                    rsid=rsids[k],
+                    source_cpra=sources[k],
+                )
+                for k, row in enumerate(rows.tolist())
+            ]
         return [
             VariantRecord(
                 variant_index=row,
@@ -585,6 +739,8 @@ class VariantAxis:
         """
         require_space(self.index_space, expect_space, "a variant index")
         vi = np.asarray(variant_index, dtype=np.int64).reshape(-1)
+        if self._cpra:
+            raise RsidIndexNotYetSupported("naming a row's rsID")
         if not self.reads_table:
             assert self._rsid_index is not None, "a 0.3.0 axis is refused without one"
             return self._rsid_index.rsids(vi, self.n_variants, expect_space=self.index_space)
@@ -675,7 +831,7 @@ class VariantAxis:
         indices: Iterable[int],
         *,
         expect_space: IndexSpace,
-    ) -> dict[int, VariantRecord]:
+    ) -> dict[int, AnyVariantRecord]:
         """Resolve many Store-local Variant Indices to `VariantRecord`s, every column; a row
         outside the axis is left out.
 
@@ -693,7 +849,7 @@ class VariantAxis:
             }
         return self._table_records_by_indices(wanted)
 
-    def _table_records_by_indices(self, wanted: list[int]) -> dict[int, VariantRecord]:
+    def _table_records_by_indices(self, wanted: list[int]) -> dict[int, AnyVariantRecord]:
         """The 0.2 table's rows `wanted` (ascending, distinct), by one of two strategies.
 
         Adaptively picks between two strategies (issue #104 follow-up,
@@ -717,7 +873,7 @@ class VariantAxis:
                 for record in self.all()
                 if record.variant_index in wanted_set
             }
-        records: dict[int, VariantRecord] = {}
+        records: dict[int, AnyVariantRecord] = {}
         for index in wanted:
             if (record := self.by_index(index, expect_space=self.index_space)) is not None:
                 records[index] = record
@@ -748,14 +904,14 @@ class VariantAxis:
             record = self.by_index(int(vi[slot]), expect_space=self.index_space)
             if record is None:
                 raise ValueError(f"no variant row at index {int(vi[slot])}")
-            alids[slot] = record.alid
-        return _identity_of(alids)
+            alids[slot] = record.cpra if isinstance(record, CpraVariantRecord) else record.alid
+        return _identity_of(alids, cpra=self._cpra)
 
-    def all(self) -> list[VariantRecord]:
+    def all(self) -> list[AnyVariantRecord]:
         """Every row, every column, in ``variant_index`` order (`records`, materialised)."""
         return list(self.records())
 
-    def records(self) -> Iterator[VariantRecord]:
+    def records(self) -> Iterator[AnyVariantRecord]:
         """Every row, streamed in ``variant_index`` order: what `all` materialises.
 
         On 0.3.0 named by the sidecars, a window of rows at a time (`sidecar_records`);
@@ -769,21 +925,21 @@ class VariantAxis:
             return self.written_table_records()
         return self._windowed_sidecar_records()
 
-    def _windowed_sidecar_records(self) -> Iterator[VariantRecord]:
+    def _windowed_sidecar_records(self) -> Iterator[AnyVariantRecord]:
         for start in range(0, self.n_variants, WINDOW_ROWS):
             stop = min(start + WINDOW_ROWS, self.n_variants)
             yield from self.sidecar_records(
                 np.arange(start, stop, dtype=np.int64), expect_space=self.index_space
             )
 
-    def written_table_records(self) -> Iterator[VariantRecord]:
+    def written_table_records(self) -> Iterator[AnyVariantRecord]:
         """Every row of the Variant Table as it is written, streamed in row order, on
         every version.
 
         The validator's one read of the table, which it checks the sidecars against
         (ADR 0074): no query asks it, and on 0.3.0 nothing else does.
         """
-        return (parse_variant_line(line) for line in self._legacy.rows())
+        return (parse_variant_line(line, cpra=self._cpra) for line in self._legacy.rows())
 
     def indices_by_source_alid(self, wanted: Iterable[str]) -> dict[str, int] | None:
         """The Variant Index of each `wanted` ALID, as the build assembly spelt it.
@@ -814,12 +970,63 @@ class VariantAxis:
             if not carries_source_alid(line):
                 return None
             record = parse_variant_line(line)
+            assert isinstance(record, VariantRecord), "the 0.2 series' table is read by 0.3 names"
             if record.source_alid in remaining:
                 found[record.source_alid] = record.variant_index
                 remaining.discard(record.source_alid)
                 if not remaining:
                     break
         return found
+
+
+def resolve_cpra_identifiers(
+    index: AlidIndex,
+    identifiers: Sequence[str],
+    *,
+    release_id: str,
+    form: CpraNormalForm,
+    space: IndexSpace,
+    aliases: Callable[[list[str]], list[int]],
+) -> IdentifierResolution:
+    """`identifiers` asked of a 0.4.0 axis whose CPRA index is `index`, in the rows `index`
+    numbers (the one resolver of both `VariantAxis` and `PanelVariantAxis`, so a hit's or a
+    miss's `variant_index` is always the index in the axis asked).
+
+    An rsID (`is_rsid`) is asked of `aliases`; anything else is a CPRA, refused unless
+    well-formed (`MalformedIdentity`, `UnsupportedChromosome`) and normal by shape
+    (`NotNormalCpra`), all before any row is looked for. An absent SNV or substitution whose
+    swapped spelling names a row, and an absent indel, are `VariantMiss`es, in the order asked.
+    """
+    asked: list[tuple[str, ParsedCpra]] = []
+    rsids: list[str] = []
+    for identifier in identifiers:
+        if is_rsid(identifier):
+            rsids.append(identifier)
+        else:
+            asked.append((identifier, parse_cpra(identifier)))
+    rows = index.search([parsed.cpra for _, parsed in asked])
+    swapped = np.full(len(asked), ABSENT, dtype=np.int64)
+    snvs = [k for k, row in enumerate(rows.tolist()) if row < 0 and not asked[k][1].is_indel]
+    if snvs:
+        swapped[snvs] = index.search([asked[k][1].swapped() for k in snvs])
+    misses: list[VariantMiss] = []
+    for k, row in enumerate(rows.tolist()):
+        if row >= 0:
+            continue
+        identifier, parsed = asked[k]
+        if parsed.is_indel:
+            misses.append(VariantMiss(identifier, release_id, INDEL_ABSENT, None, None, form))
+        elif swapped[k] >= 0:
+            [swapped_cpra] = index.alids(np.array([swapped[k]], dtype=np.int64), expect_space=space)
+            misses.append(
+                VariantMiss(
+                    identifier, release_id, SWAPPED_ALLELES, str(swapped_cpra), int(swapped[k]),
+                    form,
+                )
+            )
+    indices = [int(row) for row in rows.tolist() if row >= 0]
+    indices.extend(aliases(rsids))
+    return IdentifierResolution(np.array(indices, dtype="int32"), tuple(misses))
 
 
 def _sidecar_rows(index: AlidIndex) -> int:
@@ -837,10 +1044,11 @@ def _sidecar_rows(index: AlidIndex) -> int:
 VARIANTS_TABLE_COLUMNS = RECORD_FIELDS[1:]
 
 
-def _table_row(record: VariantRecord) -> dict[str, Any]:
+def _table_row(record: AnyVariantRecord) -> dict[str, Any]:
     """One `variants_table()` row from a record, read from the table or named by the
-    sidecars (`VARIANTS_TABLE_COLUMNS`)."""
-    return {name: record[name] for name in VARIANTS_TABLE_COLUMNS}
+    sidecars: every field of the record but `variant_index`, in the record's order
+    (`VARIANTS_TABLE_COLUMNS`; 0.4.0's are `CPRA_RECORD_FIELDS`')."""
+    return {name: record[name] for name in list(record)[1:]}
 
 
 def require_position_sidecar_files(store_path: str | Path, format_version: str) -> None:
@@ -857,15 +1065,24 @@ def require_position_sidecar_files(store_path: str | Path, format_version: str) 
         )
 
 
+def source_sidecar_kind(format_version: str) -> type[SourceAlidSidecar]:
+    """The `source_alid` sidecar a release of `format_version` carries: the `source_cpra`
+    one (`variant_source_cpra_*`) from 0.4.0, else 0.3.0's. By the series, never by the
+    files present (spec §21.5)."""
+    return SourceCpraSidecar if carries_cpra(format_version) else SourceAlidSidecar
+
+
 def require_source_alid_sidecar_files(store_path: str | Path, format_version: str) -> None:
-    """Refuse a release of `format_version` that carries a `source_alid` sidecar (0.3.0)
-    whose files are missing: it is never read as naming none, or from its table (#470)."""
+    """Refuse a release of `format_version` that carries a `source_alid` sidecar (0.3.0) or
+    a `source_cpra` one (0.4.0) whose files are missing: it is never read as naming none,
+    or from its table (#470)."""
     if not carries_source_alid_sidecar(format_version):
         return
-    if not SourceAlidSidecar.held_in(store_path):
+    kind = source_sidecar_kind(format_version)
+    if not kind.held_in(store_path):
         raise MissingSourceAlidSidecar(
-            f"{store_path}: format_version {format_version} carries a source_alid sidecar "
-            f"in {', '.join(SourceAlidSidecar.FILENAMES)}, which is missing; the release is "
+            f"{store_path}: format_version {format_version} carries a {kind.WHAT} "
+            f"in {', '.join(kind.FILENAMES)}, which is missing; the release is "
             "incomplete. Rebuild it, or rewrite it from an intact source (spec §1, §4)"
         )
 
@@ -880,9 +1097,29 @@ def carries_source_alid(line: str) -> bool:
     return line.rstrip("\n").count("\t") + 1 > _FIELDS_BEFORE_SOURCE_ALID
 
 
-def parse_variant_line(line: str) -> VariantRecord:
-    """One Store Variant Table row, as the table spells it, as a `VariantRecord`."""
+def parse_variant_line(line: str, *, cpra: bool = False) -> AnyVariantRecord:
+    """One Store Variant Table row, as the table spells it: a `VariantRecord`, or from 0.4.0
+    (`cpra`) a `CpraVariantRecord`, whose `ref`, `alt`, `cpra` and `source_cpra` stand where
+    0.3's `effect_allele`, `other_allele`, `alid` and `source_alid` did (spec §21.5). A 0.4.0
+    row has all eight columns."""
     fields = line.rstrip("\n").split("\t")
+    if cpra:
+        if len(fields) != len(CPRA_RECORD_FIELDS):
+            raise ValueError(
+                f"variant row has {len(fields)} fields, a 0.4.0 row has {len(CPRA_RECORD_FIELDS)}"
+                " (8 fields)"
+            )
+        chromosome, position, variant_index, ref, alt, key, rsid, source = fields
+        return CpraVariantRecord(
+            variant_index=int(variant_index),
+            chromosome=chromosome,
+            position=int(position),
+            ref=ref,
+            alt=alt,
+            cpra=key,
+            rsid=None if rsid in {"", "."} else rsid,
+            source_cpra=None if source in {"", "."} else source,
+        )
     # 7 fields = pre-source_alid stores; 8 = current (trailing source_alid column).
     if len(fields) == _FIELDS_BEFORE_SOURCE_ALID:
         chromosome, position, variant_index, effect_allele, other_allele, alid, rsid = fields
@@ -912,23 +1149,36 @@ def parse_variant_line(line: str) -> VariantRecord:
     )
 
 
-def _identity_of(alids: np.ndarray) -> dict[str, np.ndarray]:
-    """The four identity fields an ALID spells, and the ALID itself, per row."""
-    if not alids.size:
+def _split_keys(
+    keys: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """The chromosome, position and two alleles each `chrom:pos:A:B` key spells (an ALID's or
+    a CPRA's): the one decoder of both."""
+    if not keys.size:
         empty = np.empty(0, dtype=object)
+        return empty, np.empty(0, dtype="int64"), empty, empty
+    parts = np.array([key.split(":") for key in keys], dtype=object)
+    return parts[:, 0], parts[:, 1].astype("int64"), parts[:, 2], parts[:, 3]
+
+
+def _identity_of(alids: np.ndarray, *, cpra: bool = False) -> dict[str, np.ndarray]:
+    """The four identity fields an ALID spells, and the ALID itself, per row; for a 0.4.0
+    release (`cpra`) its CPRA's `chromosome`, `position`, `ref`, `alt` and `cpra` (REF and ALT
+    are parsed from the CPRA, never stored apart: spec §4.0)."""
+    chromosome, position, first, second = _split_keys(alids)
+    if cpra:
         return {
-            "chromosome": empty,
-            "position": np.empty(0, dtype="int64"),
-            "effect_allele": empty,
-            "other_allele": empty,
-            "alid": empty,
+            "chromosome": chromosome,
+            "position": position,
+            "ref": first,
+            "alt": second,
+            "cpra": alids,
         }
-    parts = np.array([a.split(":") for a in alids], dtype=object)
     return {
-        "chromosome": parts[:, 0],
-        "position": parts[:, 1].astype("int64"),
-        "effect_allele": parts[:, 2],
-        "other_allele": parts[:, 3],
+        "chromosome": chromosome,
+        "position": position,
+        "effect_allele": first,
+        "other_allele": second,
         "alid": alids,
     }
 

@@ -174,6 +174,9 @@ class SourceAlidSidecar(SpaceBound):
     lifted row's `source_alid`."""
 
     FILENAMES: ClassVar[tuple[str, ...]] = SOURCE_ALID_SIDECAR_FILENAMES
+    #: What the sidecar is called in a refusal; the `source_cpra` sidecar
+    #: (`ogquery.cpra_sidecar`) is this one's layout under other file names.
+    WHAT: ClassVar[str] = _WHAT
 
     def __init__(self, state: np.ndarray, utf8: np.ndarray, offsets: np.ndarray) -> None:
         """Refuses offsets that cannot slice the bytes (`MalformedSourceAlidSidecar`):
@@ -196,14 +199,14 @@ class SourceAlidSidecar(SpaceBound):
     def open(cls, store_path: str | Path) -> SourceAlidSidecar | None:
         """The sidecar in `store_path`; None when it holds none of its files. A directory
         holding some and not the others is refused (`npy_sidecar.holds_sidecar`)."""
-        arrays = open_sidecar_arrays(store_path, SOURCE_ALID_SIDECAR_FILENAMES, _WHAT)
+        arrays = open_sidecar_arrays(store_path, cls.FILENAMES, cls.WHAT)
         return None if arrays is None else cls(*arrays)
 
-    @staticmethod
-    def held_in(store_path: str | Path) -> bool:
+    @classmethod
+    def held_in(cls, store_path: str | Path) -> bool:
         """Whether `store_path` holds the sidecar's files, without reading them; a
         partial set is refused."""
-        return holds_sidecar(store_path, SOURCE_ALID_SIDECAR_FILENAMES, _WHAT)
+        return holds_sidecar(store_path, cls.FILENAMES, cls.WHAT)
 
     @property
     def n_rows(self) -> int:

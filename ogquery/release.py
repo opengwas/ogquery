@@ -36,9 +36,14 @@ from ogquery.arrays import open_group
 from ogquery.enums import PrimaryStorageLayout
 from ogquery.format import (
     LAST_0_2_FORMAT_VERSION,
+    CpraNormalForm,
+    carries_cpra,
     carries_variant_offsets,
     check_format_version,
+    cpra_normal_form,
     dense_component_shares_axis,
+    record_opened,
+    require_equal_declarations,
 )
 from ogquery.guard import ReleaseIdUnknown
 from ogquery.hybrid import DENSE_TO_SHARED_FILENAME
@@ -195,6 +200,16 @@ class StoreRelease(ReleasePaths):
         for a Dense Component from format 0.3.0 (#472), None for every other release."""
         return self._shared_root
 
+    @property
+    def release_id(self) -> str:
+        return self.manifest.release_id
+
+    @property
+    def cpra_normal_form(self) -> CpraNormalForm:
+        """The form this release's keys and signs take (spec §21.2): its manifest entry from
+        0.4.0, derived from its stamp before."""
+        return cpra_normal_form(self.manifest)
+
     def dense_component(self) -> StoreRelease:
         """Open a Hybrid release's nested Dense Component release.
 
@@ -299,4 +314,30 @@ def open_release(path: str | Path, *, legacy: LegacyTableOpener | None = None) -
     store_path = Path(path)
     manifest = StoreManifest.load(store_path)
     check_format_version(manifest.format_version, source=f"release at {store_path}")
-    return StoreRelease(path=store_path, manifest=manifest, legacy=legacy)
+    release = StoreRelease(path=store_path, manifest=manifest, legacy=legacy)
+    _require_hybrid_declarations_equal(release)
+    # Refused here when the entry is absent, present where it is forbidden, or not 0.4.0's.
+    record_opened(release.cpra_normal_form, manifest.release_id)
+    return release
+
+
+def _require_hybrid_declarations_equal(release: StoreRelease) -> None:
+    """A 0.4.0 Hybrid declares its form, reference sequence and admission in both manifests,
+    its root's and its Dense Component's, each equal in the two (spec §2): refused here, from
+    either side, before either is read for its own form."""
+    if not carries_cpra(release.manifest.format_version):
+        return
+    if release.manifest.primary_layout is PrimaryStorageLayout.HYBRID:
+        component = release.path / "dense"
+        if (component / "manifest.json").exists():
+            require_equal_declarations(
+                release.manifest, str(release.path / "manifest.json"),
+                StoreManifest.load(component), str(component / "manifest.json"),
+            )
+        return
+    root = release_scope_of(release.path, manifest=release.manifest).hybrid_root
+    if root is not None:
+        require_equal_declarations(
+            release.manifest, str(release.path / "manifest.json"),
+            StoreManifest.load(root), str(root / "manifest.json"),
+        )
