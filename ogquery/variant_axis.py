@@ -49,7 +49,7 @@ from ogquery.format import (
     carries_variant_aliases,
     carries_variant_offsets,
 )
-from ogquery.guard import require_release
+from ogquery.guard import release_id_of_directory, require_release
 from ogquery.hybrid import DenseComponentSharesAxis, shared_axis_root
 from ogquery.identity import normalise_chromosome
 from ogquery.npy_sidecar import WINDOW_ROWS, release_maps
@@ -230,11 +230,14 @@ class VariantAxis:
         legacy: LegacyVariantTable,
         *,
         format_version: str,
-        release_id: str,
+        release_id: str | None = None,
     ):
         self.store_path = Path(store_path)
         #: The release this axis reads: its indices are scoped to it (`ogquery.guard`).
-        self.release_id = release_id
+        #: Learned from the release's manifest; `release_id=` only where none is reachable.
+        self.release_id = (
+            release_id_of_directory(self.store_path) if release_id is None else release_id
+        )
         if shared_axis_root(self.store_path, format_version) is not None:
             raise DenseComponentSharesAxis(
                 f"{self.store_path} is a Hybrid's Dense Component at format_version "

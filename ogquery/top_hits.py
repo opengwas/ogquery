@@ -16,7 +16,7 @@ from typing import Any, NamedTuple
 import numpy as np
 import zarr
 
-from ogquery.guard import require_release
+from ogquery.guard import release_id_of_group, require_release
 
 #: The group a Store's data.zarr holds the Top-Hit Index in.
 TOP_HIT_GROUP = "top_hits"
@@ -199,10 +199,11 @@ class TopHitTier:
     """
 
     def __init__(
-        self, group: zarr.Group, *, release_id: str, clumps_declared: bool = False
+        self, group: zarr.Group, *, release_id: str | None = None, clumps_declared: bool = False
     ):
         #: The release this tier belongs to: its indices are scoped to it (`ogquery.guard`).
-        self.release_id = release_id
+        #: Learned from the release's manifest; `release_id=` only where none is reachable.
+        self.release_id = release_id_of_group(group) if release_id is None else release_id
         self.group = group
         self._arrays: dict[str, zarr.Array | None] = {}
         # Whether the release's manifest declares this tier's Clumps (spec §2, §18.1):
@@ -402,8 +403,10 @@ class TopHitTiers:
     metadata from the store again.
     """
 
-    def __init__(self, root: zarr.Group, *, release_id: str, clumps: Any = None):
-        self.release_id = release_id
+    def __init__(
+        self, root: zarr.Group, *, release_id: str | None = None, clumps: Any = None
+    ):
+        self.release_id = release_id_of_group(root) if release_id is None else release_id
         self._root = root
         self._tiers: dict[str, TopHitTier | None] = {}
         # The release's manifest's `clumps` entry (spec §2), None where it has none: which

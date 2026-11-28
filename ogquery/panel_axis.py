@@ -89,11 +89,10 @@ class PanelVariantAxis:
     """The shared `VariantAxis` of a 0.3.0 Hybrid, in its Dense Component's panel rows."""
 
     def __init__(
-        self, shared: VariantAxis, dense_to_shared: np.ndarray, *, release_id: str
+        self, shared: VariantAxis, dense_to_shared: np.ndarray
     ) -> None:
-        #: The release whose panel rows these are (`ogquery.guard`); not the shared axis's,
-        #: which a Hybrid's Dense Component reads under the Hybrid's id.
-        self.release_id = release_id
+        #: The release whose panel rows these are: the shared axis's own (`ogquery.guard`).
+        self.release_id = shared.release_id
         self._shared = shared
         self._dense_to_shared = np.asarray(dense_to_shared)
         self.store_path = shared.store_path

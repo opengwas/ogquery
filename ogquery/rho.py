@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 import zarr
 
-from ogquery.guard import require_release
+from ogquery.guard import release_id_of_group, require_release
 
 #: The attribute of a Hybrid Dense Component's `rho` group listing, by `analysis_index`
 #: ascending, its Overflow-only Analyses (#496). A standalone Dense release's carries none.
@@ -85,9 +85,10 @@ class DenseRhoReader:
     "Known Limitation"), so they -- and the reconstructed full matrix, once
     asked for -- are held in memory rather than re-read per query."""
 
-    def __init__(self, group: zarr.Group, n_analyses: int, *, release_id: str):
+    def __init__(self, group: zarr.Group, n_analyses: int, *, release_id: str | None = None):
         #: The release this matrix belongs to: its indices are scoped to it (`ogquery.guard`).
-        self.release_id = release_id
+        #: Learned from the release's manifest; `release_id=` only where none is reachable.
+        self.release_id = release_id_of_group(group) if release_id is None else release_id
         self.group = group
         self.n_analyses = n_analyses
         self._packed_rho, self._packed_n_null = packed_rho(group)

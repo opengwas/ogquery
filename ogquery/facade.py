@@ -864,9 +864,7 @@ class HybridStoreQuery(_StoreQueryBase):
         # fall out of step with the shared table (#481).
         self._dense = StoreQuery(
             self._dense_store,
-            variant_axis=PanelVariantAxis(
-                shared, self._dense_to_shared, release_id=store.manifest.release_id
-            ),
+            variant_axis=PanelVariantAxis(shared, self._dense_to_shared),
             analyses=self._analyses,
         )
         self._overflow.open_variant_index(self._variant_axis.n_variants)

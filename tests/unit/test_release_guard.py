@@ -201,3 +201,59 @@ def test_a_reference_round_trips_through_json() -> None:
             digests.release_digests(RELEASES / name, reference=reference),
             digests.release_digests(RELEASES / name, reference=again),
         )
+
+
+# ── a reader learns its release_id from the release it opens ─────────────────
+
+
+def test_readers_constructed_the_old_way_carry_their_releases_id() -> None:
+    from ogquery.panel_axis import PanelVariantAxis
+    from ogquery.release import open_release, release_arrays
+    from ogquery.rho import DenseRhoReader
+    from ogquery.top_hits import TopHitTiers
+    from ogquery.variant_axis import NoVariantTable, VariantAxis
+
+    ragged = RELEASES / "ragged_completed"
+    version = open_release(ragged).manifest.format_version
+    axis = VariantAxis(ragged, NoVariantTable(ragged), format_version=version)
+    assert axis.release_id == "comp"
+    tiers = TopHitTiers(release_arrays(RELEASES / "dense_completed"), clumps=None)
+    assert tiers.require(5e-8).release_id == "comp"
+    group = release_arrays(RELEASES / "dense_rho")
+    assert DenseRhoReader(group["rho"], 3).release_id == "v1"
+    shared = open_release(RELEASES / "hybrid_completed").own_variant_axis(aliases=False)
+    assert PanelVariantAxis(shared, np.arange(2)).release_id == shared.release_id == ELSEWHERE
+
+
+def _without_manifest(tmp_path: Path, name: str) -> Path:
+    import shutil
+
+    copy = tmp_path / name
+    shutil.copytree(RELEASES / name, copy)
+    (copy / "manifest.json").unlink()
+    return copy
+
+
+def test_a_reader_whose_release_cannot_be_determined_refuses_naming_the_path(
+    tmp_path: Path,
+) -> None:
+    import zarr
+
+    from ogquery.guard import ReleaseIdUnknown
+    from ogquery.release import release_arrays
+    from ogquery.rho import DenseRhoReader
+    from ogquery.top_hits import TopHitTiers
+    from ogquery.variant_axis import NoVariantTable, VariantAxis
+
+    bare = _without_manifest(tmp_path, "ragged_completed")
+    with pytest.raises(ReleaseIdUnknown, match="ragged_completed"):
+        VariantAxis(bare, NoVariantTable(bare), format_version="0.3.0")
+    with pytest.raises(ReleaseIdUnknown, match="ragged_completed"):
+        TopHitTiers(release_arrays(bare))
+    rho = _without_manifest(tmp_path, "dense_rho")
+    with pytest.raises(ReleaseIdUnknown, match="dense_rho"):
+        DenseRhoReader(release_arrays(rho)["rho"], 3)
+    memory = zarr.group()
+    with pytest.raises(ReleaseIdUnknown):
+        TopHitTiers(memory)
+    assert TopHitTiers(memory, release_id="given").release_id == "given"

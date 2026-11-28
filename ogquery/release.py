@@ -224,7 +224,6 @@ class StoreRelease(ReleasePaths):
             return PanelVariantAxis(
                 root.own_variant_axis(aliases=False),
                 np.load(self.path / DENSE_TO_SHARED_FILENAME, mmap_mode="r"),
-                release_id=root.manifest.release_id,
             )
         return self.own_variant_axis(aliases=aliases)
 
@@ -242,7 +241,6 @@ class StoreRelease(ReleasePaths):
             self.path,
             table,
             format_version=self.manifest.format_version,
-            release_id=self.manifest.release_id,
         )
 
     def query(self) -> StoreQuery | RaggedStoreQuery | HybridStoreQuery:
