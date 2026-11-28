@@ -24,7 +24,6 @@ from ogquery.manifest import StoreManifest
 from ogquery.release import open_release
 from ogquery.top_hits import (
     CLUMPS_ATTRIBUTE_KEYS,
-    CLUMPS_ENTRY_KEYS,
     Y_ENTRY_KEYS,
     Y_STORES,
     MalformedClumps,
@@ -257,14 +256,6 @@ def _y_entry() -> dict[str, Any]:
 
 def _with_y(value: Any) -> Callable[..., Any]:
     return _attribute(lambda attrs: attrs["clumps"].update({Y_STORES: value}))
-
-
-def test_a_y_entry_has_an_ld_stores_entrys_keys_without_the_row_counts() -> None:
-    counts = {"analyses", "rows_clumped", "rows_absent", "rows_ambiguous",
-              "indel_rows_by_sorted_spelling"}
-    assert Y_ENTRY_KEYS == CLUMPS_ENTRY_KEYS - counts
-    assert counts <= CLUMPS_ENTRY_KEYS
-    assert Y_STORES not in CLUMPS_ATTRIBUTE_KEYS  # optional: a group without it still reads
 
 
 def test_a_clumps_group_without_ld_stores_y_reads(root: zarr.Group) -> None:

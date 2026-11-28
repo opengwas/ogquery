@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -70,23 +71,34 @@ def _pin(store: Path, path: Path) -> dict[str, Any]:
             "mtime_ns": stat.st_mtime_ns, "sha256": _sha256(path)}
 
 
-def _write_pgen(path: Path) -> None:
+def _write_pgen(path: Path, dosages: npt.NDArray[np.float64]) -> None:
     import pgenlib
 
-    with pgenlib.PgenWriter(str(path).encode(), N, len(DOSAGES), False) as writer:
-        for row in DOSAGES:
-            writer.append_alleles(np.repeat((row // 2).astype(np.int32), 2))
+    with pgenlib.PgenWriter(str(path).encode(), N, len(dosages), False) as writer:
+        for row in dosages:
+            # 0 and 2 are homozygotes; a 1 is a heterozygote (a female's, never a male's).
+            alleles = np.zeros((N, 2), dtype=np.int32)
+            alleles[row == 2] = 1
+            alleles[row == 1, 1] = 1
+            writer.append_alleles(alleles.reshape(-1))
 
 
-def write_store(tree: Path, chrom: str, sex: str = "1") -> Path:
+def write_store(
+    tree: Path,
+    chrom: str,
+    sex: str | list[str] = "1",
+    dosages: npt.NDArray[np.float64] = DOSAGES,
+) -> Path:
     """A Genotype Store of a, b and c on `chrom`, beside the pgen, psam and pvar it pins."""
     tree.mkdir(parents=True, exist_ok=True)
     positions = POSITIONS[chrom]
     pgen, psam, pvar = tree / "panel.pgen", tree / "panel.psam", tree / "panel.pvar"
-    _write_pgen(pgen)
+    _write_pgen(pgen, dosages)
     # Every sample is a male by default: a Y Store holds males only, and a male's X, Y and MT are
-    # 0/2. `sex` lets a test say otherwise, to show that no answer reads it.
-    psam.write_text("#IID\tSEX\n" + "".join(f"s{i}\t{sex}\n" for i in range(N)), encoding="utf-8")
+    # 0/2. `sex` lets a test say otherwise: one value for all samples, or one per sample.
+    sexes = [sex] * N if isinstance(sex, str) else sex
+    psam.write_text("#IID\tSEX\n" + "".join(f"s{i}\t{x}\n" for i, x in enumerate(sexes)),
+                    encoding="utf-8")
     identities = [sorted_identity(chrom, p, ref, alt)
                   for p, (ref, alt) in zip(positions, ALLELES, strict=True)]
     pvar.write_text(
@@ -102,11 +114,11 @@ def write_store(tree: Path, chrom: str, sex: str = "1") -> Path:
     for name in ("pgen", "psam", "pvar"):  # fixed mtimes: an open refuses a changed one
         os.utime(tree / f"panel.{name}", ns=(1_795_726_371_000_000_000,) * 2)
     _write_variants(store, chrom, positions, identities)
-    _write_arrays(store, identities)
+    _write_arrays(store, identities, dosages)
     document = json.loads((store / "zarr.json").read_text(encoding="utf-8"))
     record = document["attributes"]["genotype_store"]
     record.pop("pc_diagnostic", None)
-    record["n_variants"] = len(DOSAGES)
+    record["n_variants"] = len(dosages)
     record["panel"] = {"id": "ploidy", "ancestry": "EUR", "n": N, "samples_sha256": None}
     record["filesets"] = [{
         "order": None, "panel": "ploidy", "samples": N, "subset": list(range(N)),
@@ -127,7 +139,7 @@ def write_store(tree: Path, chrom: str, sex: str = "1") -> Path:
         "filter": ["PASS", "."], "mac_min": 10, "info_min": None, "autosomes_only": False,
         "ploidy": {
             "chromosomes": [chrom], "sex_source": "psam SEX (1 male, 2 female)",
-            "males": N, "females": 0, "male_x_coding": "0/2",
+            "males": sexes.count("1"), "females": sexes.count("2"), "male_x_coding": "0/2",
             "x_pars_grch38": [[10001, 2781479], [155701383, 156030895]], "mac_min_haploid": 10,
         },
     }
@@ -164,53 +176,52 @@ def _write_variants(store: Path, chrom: str, positions: tuple[int, ...], identit
                        compressors=ZstdCodec(level=3))
 
 
-def _write_arrays(store: Path, identities: Any) -> None:
+def _write_arrays(store: Path, identities: Any, dosages: npt.NDArray[np.float64]) -> None:
     arrays = store / "genotypes"
     arrays.mkdir()
     basis = np.full((N, 1), 1 / np.sqrt(N))
-    projection = DOSAGES @ basis
-    norm = np.sqrt((DOSAGES**2).sum(axis=1) - (projection**2).sum(axis=1))
+    projection = dosages @ basis
+    norm = np.sqrt((dosages**2).sum(axis=1) - (projection**2).sum(axis=1))
     sign = np.array([1.0 if i.a1_is_alt else -1.0 for i in identities])
     for name, array in {
         "basis": basis, "projection": projection, "norm": norm, "sign": sign,
-        "pgen_row": np.arange(len(DOSAGES), dtype="<i8"),
-        "fileset": np.zeros(len(DOSAGES), dtype="<i4"),
+        "pgen_row": np.arange(len(dosages), dtype="<i8"),
+        "fileset": np.zeros(len(dosages), dtype="<i4"),
     }.items():
         np.save(arrays / f"{name}.npy", array)
 
 
 @pytest.fixture(params=["X", "Y", "MT"])
-def opened(request: pytest.FixtureRequest, tmp_path: Path) -> Any:
-    chrom = request.param
-    store = write_store(tmp_path, chrom)
-    with ogquery.ld.open(store) as reader:
-        reader.chrom = chrom  # type: ignore[attr-defined]
-        yield reader
+def opened(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[tuple[Any, str]]:
+    chrom: str = request.param
+    with ogquery.ld.open(write_store(tmp_path, chrom)) as reader:
+        yield reader, chrom
 
 
-def test_a_genotype_store_answers_r_on_x_y_and_mt_with_literal_values(opened: Any) -> None:
-    chrom = opened.chrom
+def test_a_genotype_store_answers_r_on_x_y_and_mt_with_literal_values(
+    opened: tuple[Any, str],
+) -> None:
+    reader, chrom = opened
     alids = [f"{chrom}:{p}:A:C" for p in POSITIONS[chrom]]
-    found = opened.matrix(alids)
-    np.testing.assert_array_equal(found.r, EXPECTED_R)
+    np.testing.assert_array_equal(reader.matrix(alids).r, EXPECTED_R)
 
 
 def test_no_answer_reads_the_sexes(tmp_path: Path) -> None:
     """r is from dosages alone: the same dosages with every sample female answer the same."""
-    male = ogquery.ld.open(write_store(tmp_path / "male", "X"))
-    female = ogquery.ld.open(write_store(tmp_path / "female", "X", sex="2"))
     alids = [f"X:{p}:A:C" for p in POSITIONS["X"]]
-    np.testing.assert_array_equal(male.matrix(alids).r, female.matrix(alids).r)
-    male.close()
-    female.close()
+    with ogquery.ld.open(write_store(tmp_path / "male", "X")) as male:
+        with ogquery.ld.open(write_store(tmp_path / "female", "X", sex="2")) as female:
+            np.testing.assert_array_equal(male.matrix(alids).r, female.matrix(alids).r)
 
 
-def test_a_genotype_store_answers_proxies_on_x_y_and_mt_with_literal_values(opened: Any) -> None:
+def test_a_genotype_store_answers_proxies_on_x_y_and_mt_with_literal_values(
+    opened: tuple[Any, str],
+) -> None:
     """At r² ≥ 0.5 every pair is a proxy of the other: r² = 0.6005 (396/511 squared) for a-b and
     b-c, 1 for a-c. Each query's proxies come in the order the store answers them."""
-    chrom = opened.chrom
+    reader, chrom = opened
     a, b, c = (f"{chrom}:{p}:A:C" for p in POSITIONS[chrom])
-    found = opened.proxies([a, b, c], r2=0.5, kb=1000)
+    found = reader.proxies([a, b, c], r2=0.5, kb=1000)
     assert found.query.tolist() == [a, a, b, b, c, c]
     assert found.proxy.tolist() == [c, b, a, c, a, b]
     np.testing.assert_array_equal(
@@ -222,4 +233,41 @@ def test_a_genotype_store_answers_proxies_on_x_y_and_mt_with_literal_values(open
     )
     step = 500 if chrom == "MT" else 100_000  # the variants lie a step apart
     assert found.distance.tolist() == [2 * step, step, step, step, 2 * step, step]
+    assert found.absent == ()
+
+
+#: A mixed-sex X Store: samples 0-3 are males, written 0/2 (their one X copy as a homozygote),
+#: samples 4-7 are females, written 0, 1 or 2. Each variant has ALT dosages summing to 8, so
+#: its mean is 1 and its centred vector is the dosages minus 1:
+#:
+#:     a = 2 2 0 0 | 2 1 1 0   centred  1  1 -1 -1 |  1 0 0 -1   sum of squares 6
+#:     b = 2 0 2 0 | 0 1 1 2   centred  1 -1  1 -1 | -1 0 0  1   sum of squares 6
+#:     c = 0 2 2 0 | 0 1 1 2   centred -1  1  1 -1 | -1 0 0  1   sum of squares 6
+#:
+#: a·b = -2, a·c = -2, b·c = 2, so Pearson r is -1/3, -1/3 and +1/3, which at scale 511 are the
+#: codes -170, -170 and 170 (511 / 3 = 170.33). The A1 signs are -, + and - as above, so the
+#: A1-signed r(a, b) = +170/511, r(a, c) = (-)(-)(-170/511) = -170/511 and r(b, c) = -170/511.
+MIXED = np.array([[2, 2, 0, 0, 2, 1, 1, 0], [2, 0, 2, 0, 0, 1, 1, 2], [0, 2, 2, 0, 0, 1, 1, 2]],
+                 dtype=np.float64)
+MIXED_SEXES = ["1"] * 4 + ["2"] * 4
+MIXED_R = np.array([[511, 170, -170], [170, 511, -170], [-170, -170, 511]]) / 511
+
+
+@pytest.fixture
+def mixed(tmp_path: Path) -> Iterator[Any]:
+    store = write_store(tmp_path, "X", sex=MIXED_SEXES, dosages=MIXED)
+    with ogquery.ld.open(store) as reader:
+        yield reader
+
+
+def test_a_mixed_sex_x_store_answers_r_and_proxies_with_literal_values(mixed: Any) -> None:
+    a, b, c = (f"X:{p}:A:C" for p in POSITIONS["X"])
+    np.testing.assert_array_equal(mixed.matrix([a, b, c]).r, MIXED_R)
+    found = mixed.proxies([a, b, c], r2=0.1, kb=1000)  # r² = (170/511)² = 0.1107
+    pairs = sorted(zip(found.query.tolist(), found.proxy.tolist(), found.r.tolist(), strict=True))
+    assert pairs == sorted([
+        (a, b, 170 / 511), (a, c, -170 / 511), (b, a, 170 / 511),
+        (b, c, -170 / 511), (c, a, -170 / 511), (c, b, -170 / 511),
+    ])
+    np.testing.assert_allclose(found.r2, (170 / 511) ** 2)
     assert found.absent == ()

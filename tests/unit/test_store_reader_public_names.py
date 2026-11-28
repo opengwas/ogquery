@@ -466,6 +466,8 @@ PUBLIC_NAMES: dict[str, tuple[str, ...]] = {
         "TopHitTier",
         "TopHitTiers",
         "UnstoredThresholdError",
+        "Y_ENTRY_KEYS",
+        "Y_STORES",
         "analysis_hit_counts",
         "clumps_array_problems",
         "clumps_attribute_problem",
@@ -476,6 +478,7 @@ PUBLIC_NAMES: dict[str, tuple[str, ...]] = {
         "threshold_key",
         "tier_arrays",
         "tier_threshold",
+        "y_stores_problem",
     ),
     "ogquery.variant_axis": (
         "LegacyTableOpener",
