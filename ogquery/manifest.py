@@ -20,7 +20,7 @@ from ogquery.enums import (
     CompletionState,
     PrimaryStorageLayout,
 )
-from ogquery.format import check_format_version
+from ogquery.format import ABSENT, check_format_version
 from ogquery.guard import (
     ANALYSIS,
     PANEL,
@@ -124,6 +124,10 @@ class StoreManifest:
     #: to -- never declares Clumps it does not carry (ADR 0106 §10). Only the step that
     #: writes them declares them, in place (`OpenGWASDBStore.set_manifest_entry`).
     clumps: Any = None
+    #: The manifest's `cpra_normal_form` entry exactly as written (spec §2); `ABSENT` when the
+    #: key is not there, which is not `null`. Required from 0.4.0 and forbidden before;
+    #: `format.cpra_normal_form` checks it and derives an earlier release's form from its stamp.
+    cpra_normal_form_entry: Any = ABSENT
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> StoreManifest:
@@ -142,6 +146,7 @@ class StoreManifest:
                 RegionsEntry.from_manifest(data["regions"]) if "regions" in data else None
             ),
             clumps=data.get("clumps"),
+            cpra_normal_form_entry=data.get("cpra_normal_form", ABSENT),
         )
 
     @property
@@ -173,6 +178,8 @@ class StoreManifest:
         }
         if self.regions is not None:
             data["regions"] = self.regions.to_manifest()
+        if self.cpra_normal_form_entry is not ABSENT:
+            data["cpra_normal_form"] = self.cpra_normal_form_entry
         return data
 
 

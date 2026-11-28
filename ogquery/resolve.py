@@ -98,7 +98,7 @@ def _rows(
         row: dict[str, object] = {
             "analysis_id": analysis["analysis_id"],
             "analysis_label": analysis.get("analysis_label", ""),
-            **_variant_identity(identity, i),
+            **_variant_identity(identity, i, variant_axis.identity_columns),
             "z": float(result["z"][i]),
             "se": float(result["se"][i]),
             "beta": float(derived.beta[i]),
@@ -116,25 +116,26 @@ def _rows(
 def _variant_info(
     variant_axis: AnyVariantAxis, variant_index: np.ndarray, space: IndexSpace
 ) -> dict[str, np.ndarray]:
-    """The variant info a row resolved with it carries: each row's rsID and `source_alid`,
-    None where it has none, which the row spells ``.``."""
+    """The variant info a row resolved with it carries: each row's rsID and `source_alid`
+    (`source_cpra` from 0.4.0), None where it has none, which the row spells ``.``."""
     return {
         "rsid": variant_axis.rsids_by_indices(variant_index, expect_space=space),
-        "source_alid": variant_axis.source_alids_by_indices(
+        variant_axis.source_column: variant_axis.source_alids_by_indices(
             variant_index, expect_space=space
         ),
     }
 
 
-def _variant_identity(identity: dict[str, np.ndarray], i: int) -> dict[str, object]:
-    """One row's chromosome, position, ALID and alleles, in the row's column order,
-    from the ALID index (`VariantAxis.identity_by_indices`)."""
+def _variant_identity(
+    identity: dict[str, np.ndarray], i: int, columns: tuple[str, ...]
+) -> dict[str, object]:
+    """One row's identity columns, in the release's column order (`VariantAxis.identity_columns`:
+    chromosome, position, ALID and alleles; from 0.4.0 chromosome, position, REF, ALT and
+    CPRA, with no `effect_allele`: every statistic is for ALT), from the key index
+    (`VariantAxis.identity_by_indices`)."""
     return {
-        "chromosome": identity["chromosome"][i],
-        "position": int(identity["position"][i]),
-        "alid": identity["alid"][i],
-        "effect_allele": identity["effect_allele"][i],
-        "other_allele": identity["other_allele"][i],
+        name: int(identity[name][i]) if name == "position" else identity[name][i]
+        for name in columns
     }
 
 

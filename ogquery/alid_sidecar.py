@@ -164,6 +164,9 @@ class AlidSidecar(SpaceBound):
     """
 
     FILENAMES: ClassVar[tuple[str, ...]] = ALID_SIDECAR_FILENAMES
+    #: What the sidecar is called in a refusal; the CPRA sidecar (`ogquery.cpra_sidecar`) is
+    #: this one's layout under other file names.
+    WHAT: ClassVar[str] = "ALID sidecar"
 
     def __init__(
         self, utf8: np.ndarray, offsets: np.ndarray, keys: np.ndarray, order: np.ndarray
@@ -181,7 +184,7 @@ class AlidSidecar(SpaceBound):
         A directory holding some of them and not the others is refused: a half-written
         sidecar answers some lookups and not others, which reads as absence.
         """
-        arrays = open_sidecar_arrays(store_path, ALID_SIDECAR_FILENAMES, "ALID sidecar")
+        arrays = open_sidecar_arrays(store_path, cls.FILENAMES, cls.WHAT)
         return None if arrays is None else cls(*arrays)
 
     @property

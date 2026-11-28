@@ -83,6 +83,25 @@ reference) or `off_sequence` (an `N`, or a span leaving its contig). The same fi
 opengwasdb #518's alignment tool, which adds `lift_failed` for its own lift. Malformed input
 (an empty or non-ACGT allele, two alleles alike) is a caller's bug and raises instead.
 
+**CPRA Normal Form**:
+The fact `ogquery.format.CpraNormalForm` states of a release: which alleles a key spells in which
+order (`alleles`), which allele a statistic is signed for (`signed_for`), how indels are spelt
+(`indels`) and the reference sequence they were formed against (`sequence`, an assembly and a
+sequence digest, `None` where a stamp names none). A 0.4.0 manifest declares it and must hold
+exactly `ref_alt`, `alt`, `left_aligned` and a sequence of the release's assembly; an earlier
+release's is derived from its stamp by `cpra_normal_form(manifest)`, the one place a stamp is
+read for it. Two releases join only when equal (`require_joinable`, which raises
+`CpraNormalFormMismatch`); opening two forms in one process warns `MixedCpraNormalForms`.
+_Avoid_: key format, sign convention (each is one field of it).
+
+**Variant Miss**:
+The diagnostic a 0.4.0 query gives for an identifier that named no row where the absence is not
+plain: `swapped_alleles` (an absent SNV or substitution CPRA whose REF and ALT exchanged name a
+row: an ALID written REF-second) or `indel_absent` (an absent indel, naming the release's form).
+It rides `Associations.misses` and `variants()` warns it as `VariantMissWarning`. An absent rsid,
+and an absent SNV whose swap names no row, give none; a CPRA that `trim_alleles` would change is
+refused (`NotNormalCpra`), not missed.
+
 **Clean Install**:
 A fresh virtual environment into which `pip install ogquery` was run with source builds
 refused: it must hold ogquery, numpy, zarr, numcodecs and their own dependencies, and

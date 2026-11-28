@@ -110,17 +110,19 @@ def test_the_version_this_build_writes_is_one_it_can_read():
     assert store_format.SUPPORTED_FORMAT_VERSIONS[series] >= remainder
 
 
-def test_the_readable_formats_are_the_two_the_epic_carries():
-    """Two series: 0.1 (Zarr v2) and 0.2 (Zarr v3 with sharding, since #245). The 0.2
+def test_the_readable_formats_are_the_four_the_epics_carry():
+    """Four series: 0.1 (Zarr v2) and 0.2 (Zarr v3 with sharding, since #245). The 0.2
     series reads to 0.2.3: 0.2.1 adds a Ragged release's optional `regions.tsv` (#430),
     0.2.2 spells an indel's ALID reference first (#381, ADR 0079), and 0.2.3 records
     `n_missing_se_out_of_range` (#338, ADR 0068). The 0.3 series (#467, ADR 0105) is
-    0.2.3 with the variable-length ALID sidecar. Another entry is a decision, not an
-    accident."""
+    0.2.3 with the variable-length ALID sidecar. The 0.4 series (#517, ADR 0108) keys
+    every variant by CPRA and signs every statistic for ALT. Another entry is a decision,
+    not an accident."""
     assert dict(store_format.SUPPORTED_FORMAT_VERSIONS) == {
         (0, 1): (0,),
         (0, 2): (3,),
         (0, 3): (0,),
+        (0, 4): (0,),
     }
 
 
@@ -152,7 +154,9 @@ def test_a_release_is_stamped_the_lowest_version_whose_features_it_uses():
         ) == "0.2.3"
         # 0.3.0 is 0.2.3 with the variable-length ALID sidecar (#467, ADR 0105).
         assert stamp(carries_regions=regions, reference_first_indels=True) == "0.3.0"
-    assert store_format.WRITTEN_FORMAT_VERSIONS == ("0.2.0", "0.2.1", "0.2.2", "0.2.3", "0.3.0")
+    assert store_format.WRITTEN_FORMAT_VERSIONS == (
+        "0.2.0", "0.2.1", "0.2.2", "0.2.3", "0.3.0", "0.4.0",
+    )
 
 
 def test_a_sidecar_without_0_2_3_s_features_is_no_version():
@@ -181,7 +185,9 @@ def test_each_readable_series_has_one_zarr_on_disk_format():
     does not pattern-match a version string to guess it (#264 review)."""
     assert store_format.zarr_format_for_version("0.1.0") == 2
     assert store_format.zarr_format_for_version(CURRENT_FORMAT_VERSION) == 3
-    assert dict(store_format.ZARR_FORMAT_BY_SERIES) == {(0, 1): 2, (0, 2): 3, (0, 3): 3}
+    assert dict(store_format.ZARR_FORMAT_BY_SERIES) == {
+        (0, 1): 2, (0, 2): 3, (0, 3): 3, (0, 4): 3,
+    }
 
 
 def test_an_unreadable_version_has_no_zarr_layout():
@@ -190,8 +196,8 @@ def test_an_unreadable_version_has_no_zarr_layout():
 
 
 def test_an_unknown_series_is_rejected():
-    """A breaking change moves the series, and this build reads three of them."""
-    for version in ("0.4.0", "1.0.0", "9.9.9"):
+    """A breaking change moves the series, and this build reads four of them."""
+    for version in ("0.5.0", "1.0.0", "9.9.9"):
         with pytest.raises(store_format.UnsupportedFormatVersion, match="release series"):
             store_format.check_format_version(version)
 
