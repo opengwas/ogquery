@@ -74,7 +74,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -251,23 +251,178 @@ def _table_digests(table: dict[int, dict[str, Any]]) -> dict[str, str]:
 
 
 def query_shapes(
-    q: Any, variants: dict[int, dict[str, Any]] | None = None
+    q: Any,
+    variants: dict[int, dict[str, Any]] | None = None,
+    reference: Reference | None = None,
 ) -> dict[str, Callable[[], Any]]:
     """Every association-returning question the facade answers, by a stable name.
 
-    `variants` is `q.variants_table()`, passed when the caller already read it.
+    `variants` is `q.variants_table()`, passed when the caller already read it. With a
+    `reference` the questions are the reference's own (`Reference`), asked without a
+    limit where the facade would truncate (the projection limits them,
+    `_Projector.associations`), and only of the Analyses `q` holds.
     """
     variants = q.variants_table() if variants is None else variants
-    analyses = q.analyses_table()
-    ids = _spread([row["analysis_id"] for _, row in sorted(analyses.items())], N_ANALYSES_ASKED)
-    records = [variants[key] for key in sorted(variants)]
-    identifiers = _identifiers(_spread(records, N_VARIANTS_ASKED))
+    asked = reference_of(q, variants) if reference is None else reference
+    ids = _held(q, asked.ids) if reference is not None else asked.ids
     shapes: dict[str, Callable[[], Any]] = {}
-    last = _range_last(records, len(analyses))
     for observed_only, flag in ((False, "all"), (True, "observed_only")):
-        asking = _Asking(q, ids, identifiers, records[0], last, observed_only)
+        asking = _Asking(
+            q, ids, asked.identifiers, asked.first, asked.last, observed_only,
+            limited=reference is None,
+        )
         shapes.update({f"{name}/{flag}": shape for name, shape in asking.shapes().items()})
     return shapes
+
+
+@dataclass(frozen=True)
+class Reference:
+    """The question set of one release, and where its answers are read.
+
+    A release is asked the questions a reference release is asked, not its own spread
+    (`release_answers`, ``reference=``), and each answer is projected onto the reference's
+    index space: a row's `variant_index` is the reference's row of that ALID, its
+    `analysis_index` the reference's index of that `analysis_id`. Two releases whose
+    indices differ -- one spliced from the other, ADR 0109 -- then answer in one numbering,
+    and a digest of an index array can be compared.
+
+    `analyses` and `variants` are the reference's whole index maps; the rest are the
+    questions it poses, chosen from its rows exactly as an unprojected release chooses
+    from its own (`reference_of`).
+    """
+
+    #: `analysis_id` -> the reference's `analysis_index`.
+    analyses: Mapping[str, int]
+    #: ALID -> the reference's `variant_index`.
+    variants: Mapping[str, int]
+    #: The Analyses the per-Analysis questions name, spread over the reference.
+    ids: list[str]
+    #: The variants the PheWAS and lookup questions name: ALIDs, then rsIDs.
+    identifiers: list[str]
+    #: The ALIDs the ALID probes ask (`probed_alids`).
+    probed: list[str]
+    #: The range probes (`range_questions`), the whole-span range's two ends, and the
+    #: bounds and the narrowing the reference records (`narrowed_range_question`).
+    ranges: dict[str, tuple[str, int, int]]
+    first: dict[str, Any]
+    last: dict[str, Any]
+    narrowed: dict[str, Any] | None = None
+
+
+def reference_of(q: Any, variants: dict[int, dict[str, Any]] | None = None) -> Reference:
+    """The questions `q`'s release poses: the reference an unprojected release is its own
+    of. `variants` is `q.variants_table()`, passed when the caller already read it."""
+    variants = q.variants_table() if variants is None else variants
+    analyses = q.analyses_table()
+    ordered = [row["analysis_id"] for _, row in sorted(analyses.items())]
+    records = [variants[key] for key in sorted(variants)]
+    narrowed = narrowed_range_question(records, len(analyses))
+    return Reference(
+        analyses={row["analysis_id"]: int(i) for i, row in analyses.items()},
+        variants={row["alid"]: int(i) for i, row in variants.items()},
+        ids=_spread(ordered, N_ANALYSES_ASKED),
+        identifiers=_identifiers(_spread(records, N_VARIANTS_ASKED)),
+        probed=probed_alids(variants),
+        ranges=range_questions(variants),
+        first=records[0],
+        last=_range_last(records, len(analyses)),
+        narrowed=narrowed,
+    )
+
+
+def _held(q: Any, ids: Sequence[str]) -> list[str]:
+    """`ids` that the release `q` reads holds, in their order."""
+    held = {row["analysis_id"] for row in q.analyses_table().values()}
+    return [a for a in ids if a in held]
+
+
+class _Projector:
+    """One release's answers, projected onto a `Reference`'s index space.
+
+    Rows the reference has no index for are dropped: an Analysis it does not name, a
+    variant it does not hold. That is done **before** any limit, so a limit never hides a
+    hit that another Analysis displaced (ADR 0109 §8b).
+    """
+
+    def __init__(
+        self,
+        reference: Reference,
+        variants: dict[int, dict[str, Any]],
+        analyses: dict[int, dict[str, str]],
+    ) -> None:
+        self.reference = reference
+        self.variants = _index_map(
+            {i: reference.variants.get(row["alid"], -1) for i, row in variants.items()}
+        )
+        self.analyses = _index_map(
+            {i: reference.analyses.get(row["analysis_id"], -1) for i, row in analyses.items()}
+        )
+
+    def tables(
+        self, variants: dict[int, dict[str, Any]], analyses: dict[int, dict[str, str]]
+    ) -> tuple[dict[int, dict[str, Any]], dict[int, dict[str, str]]]:
+        return self.rows(variants, self.variants, "variant_index"), self.rows(
+            analyses, self.analyses, "analysis_index"
+        )
+
+    @staticmethod
+    def rows(table: dict[int, dict[str, Any]], mapping: np.ndarray, key: str) -> Any:
+        """`table`'s rows the reference holds, keyed by its index (a row's own `key`
+        column too)."""
+        out: dict[int, dict[str, Any]] = {}
+        for i, row in table.items():
+            at = int(mapping[i])
+            if at >= 0:
+                out[at] = {**row, key: type(row[key])(at)} if key in row else row
+        return dict(sorted(out.items()))
+
+    def apply(self, question: Question, answer: Any) -> tuple[Any, Any]:
+        """`answer` projected, and the same rows in the release's own indices (what
+        `resolve` reads). A refusal, a count of the reference's variants, a Rho answer
+        by `analysis_id`: each as the reference would read it."""
+        if isinstance(answer, Associations):
+            limit = TOP_HITS_LIMIT if question.name.startswith("top_hits/limit") else None
+            return self.associations(answer, limit)
+        if isinstance(answer, Exception):
+            return answer, None
+        if question.name == "variant_count":
+            return int((self.variants >= 0).sum()), None
+        if question.section == "rho":
+            return self.rho(question.name, answer), None
+        if isinstance(answer, dict) and question.section == "variant_reads":
+            return self.rows(answer, self.variants, "variant_index"), None
+        return answer, None
+
+    def associations(self, answer: Associations, limit: int | None) -> tuple[Associations, Any]:
+        vi = self.variants[answer.variant_index.astype(np.int64)]
+        ai = self.analyses[answer.analysis_index.astype(np.int64)]
+        keep = np.flatnonzero((vi >= 0) & (ai >= 0))
+        order = keep[np.lexsort((ai[keep], vi[keep]))]
+        own = answer.take(order)
+        projected = replace(own, variant_index=vi[order], analysis_index=ai[order])
+        return projected.head(limit), own.head(limit)
+
+    def rho(self, name: str, answer: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        """The answers that list every Analysis, in the release's own order, restricted to
+        the reference's and put in its order: `rho_row` and a whole `rho_matrix`."""
+        if not (name.startswith("rho_row/") or name == "rho_matrix") or not answer:
+            return answer
+        ids = answer["analysis_id"]
+        at = np.array([self.reference.analyses.get(a, -1) for a in ids], dtype=np.int64)
+        keep = np.flatnonzero(at >= 0)
+        order = keep[np.argsort(at[keep], kind="stable")]
+        if name == "rho_matrix":
+            both = np.ix_(order, order)
+            return {"analysis_id": ids[order], "rho": answer["rho"][both],
+                    "n_null": answer["n_null"][both]}
+        return {key: values[order] for key, values in answer.items()}
+
+
+def _index_map(mapping: dict[int, int]) -> np.ndarray:
+    """`mapping` as an array indexed by its key, -1 where it has none."""
+    out = np.full(max(mapping, default=-1) + 1, -1, dtype=np.int64)
+    out[list(mapping)] = list(mapping.values())
+    return out
 
 
 def _range_last(records: list[dict[str, Any]], n_analyses: int) -> dict[str, Any]:
@@ -326,6 +481,10 @@ class _Asking:
     first: dict[str, Any]
     last: dict[str, Any]
     observed_only: bool
+    #: Whether `top_hits/limit` asks the facade for its limit. A projected question set
+    #: asks for none, and the projection applies `TOP_HITS_LIMIT` after it has dropped
+    #: the rows that are not the reference's.
+    limited: bool = True
 
     def shapes(self) -> dict[str, Callable[[], Any]]:
         q, o = self.q, self.observed_only
@@ -360,9 +519,13 @@ class _Asking:
                 shapes[f"top_hits/{threshold}/{a}"] = partial(
                     q.top_hits, analysis_id=a, threshold=threshold, observed_only=o
                 )
-        shapes["top_hits/limit"] = partial(q.top_hits, threshold=0.2, limit=3, observed_only=o)
+        limit = TOP_HITS_LIMIT if self.limited else None
+        shapes["top_hits/limit"] = partial(q.top_hits, threshold=0.2, limit=limit, observed_only=o)
         return shapes
 
+
+#: The limit `top_hits/limit` asks.
+TOP_HITS_LIMIT = 3
 
 #: The shapes whose answers are also resolved to rows.
 RESOLVED_SHAPES = ("lookup/", "top_hits/0.2/all", "range_phewas/")
@@ -530,40 +693,48 @@ class Question:
 
 
 def questions(
-    q: Any, variants: dict[int, dict[str, Any]], path: str | Path
+    q: Any,
+    variants: dict[int, dict[str, Any]],
+    path: str | Path,
+    reference: Reference | None = None,
 ) -> Iterator[Question]:
     """Every question asked of the release `q` reads, once, in a fixed order: the one
     enumeration both renderings of `release_answers` -- digests and readable rows -- read,
-    so a question added here is in both. `variants` is `q.variants_table()`."""
-    ids = _spread(
-        [row["analysis_id"] for _, row in sorted(q.analyses_table().items())], N_ANALYSES_ASKED
-    )
-    records = [variants[key] for key in sorted(variants)]
-    identifiers = _identifiers(_spread(records, N_VARIANTS_ASKED))
-    asked = range_questions(variants)
-    yield from _shape_questions(q, variants)
-    yield from _probe_questions(q, variants, ids)
-    yield from _variant_read_questions(q, identifiers, asked)
+    so a question added here is in both. `variants` is `q.variants_table()`.
+
+    With a `reference` the questions are its own, and an Analysis of it the release does not
+    hold is not asked about by name, as that would refuse the whole question: it is asked
+    alone, and the refusal is its answer (``refusals``, ``unheld/<analysis_id>``), never an
+    empty answer."""
+    asked = reference_of(q, variants) if reference is None else reference
+    ids = asked.ids if reference is None else _held(q, asked.ids)
+    yield from _shape_questions(q, variants, reference)
+    yield from _probe_questions(q, asked.probed, ids)
+    yield from _variant_read_questions(q, asked.identifiers, asked.ranges)
     yield from _subset_questions(q, path, ids)
-    yield from _miss_questions(q, identifiers, ids)
-    yield from _range_probe_questions(q, asked)
+    yield from _miss_questions(q, asked.identifiers, ids)
+    yield from _range_probe_questions(q, asked.ranges)
     yield from _rho_questions(q, ids)
     for name, ask in refusal_questions(q).items():
         yield Question("refusals", name, ask, REFUSAL_ERRORS)
+    if reference is not None:
+        for a in (a for a in asked.ids if a not in ids):
+            yield Question(
+                "refusals", f"unheld/{a}", partial(q.analysis, a), (UnknownAnalysisError,)
+            )
 
 
-def _shape_questions(q: Any, variants: dict[int, dict[str, Any]]) -> Iterator[Question]:
+def _shape_questions(
+    q: Any, variants: dict[int, dict[str, Any]], reference: Reference | None
+) -> Iterator[Question]:
     """`query_shapes`, with the refusal a Dense or Hybrid release gives an unstored tier."""
-    for name, shape in query_shapes(q, variants).items():
+    for name, shape in query_shapes(q, variants, reference).items():
         refused = (UnstoredThresholdError,) if expects_refusal(q, name) else ()
         yield Question("shapes", name, shape, refused, name.startswith(RESOLVED_SHAPES))
 
 
-def _probe_questions(
-    q: Any, variants: dict[int, dict[str, Any]], ids: list[str]
-) -> Iterator[Question]:
+def _probe_questions(q: Any, alids: list[str], ids: list[str]) -> Iterator[Question]:
     """Each probed ALID's PheWAS, and one lookup of them all (module docstring)."""
-    alids = probed_alids(variants)
     for alid in alids:
         yield Question("alid_probes", f"phewas/{alid}", partial(q.phewas, alid))
     yield Question("alid_probes", "lookup", partial(q.lookup, alids, ids))
@@ -646,15 +817,25 @@ def _subset_questions(q: Any, path: str | Path, ids: list[str]) -> Iterator[Ques
 
 
 def _walk(
-    q: Any, variants: dict[int, dict[str, Any]], path: str | Path
-) -> Iterator[tuple[Question, Any]]:
+    q: Any,
+    variants: dict[int, dict[str, Any]],
+    path: str | Path,
+    reference: Reference | None = None,
+    projector: _Projector | None = None,
+) -> Iterator[tuple[Question, Any, Any]]:
     """Each question with its answer: what it returned, or the refusal it is expected to
-    raise. Any other error is a failure, raised."""
-    for question in questions(q, variants, path):
+    raise, and, projected (`_Projector`), the answer's rows in the release's own indices.
+    Any other error is a failure, raised."""
+    for question in questions(q, variants, path, reference):
         try:
-            yield question, question.ask()
+            answer = question.ask()
         except question.refusals as refused:
-            yield question, refused
+            answer = refused
+        if projector is None:
+            yield question, answer, None
+        else:
+            projected, own = projector.apply(question, answer)
+            yield question, projected, own
 
 
 def _digested(answer: Any) -> dict[str, str]:
@@ -692,15 +873,33 @@ def _open(path: str | Path, query: QueryOpener | None) -> Any:
 
 
 def release_answers(
-    path: str | Path, *, query: QueryOpener | None = None, readable: bool = True
+    path: str | Path,
+    *,
+    query: QueryOpener | None = None,
+    readable: bool = True,
+    reference: Reference | None = None,
 ) -> dict[str, Any]:
     """Every answer the release at `path` gives, asked once (`questions`) and rendered
     twice: ``digests`` (`release_digests`) and, with `readable`, ``readable``
     (`readable_answer`). `query` opens the release (`open_query` by default; module
-    docstring)."""
+    docstring).
+
+    With a `reference` (`reference_of`, of another release) the release is asked the
+    reference's questions, and every answer is projected onto the reference's index
+    space (`Reference`), before any limit: its tables hold the reference's rows, an
+    association answer its rows for the reference's Analyses and variants in the
+    reference's numbering and order, and an Analysis the release does not hold is
+    refused (``refusals``). Two releases, one spliced from the other, then answer
+    comparably. A release asked its own `reference_of` answers as it would unprojected,
+    with every answer's rows in `(variant_index, analysis_index)` order."""
     with _open(path, query) as q:
-        variants = q.variants_table()
-        analyses = q.analyses_table()
+        own_variants = q.variants_table()
+        variants, analyses = own_variants, q.analyses_table()
+        asked = reference_of(q, variants) if reference is None else reference
+        projector = None
+        if reference is not None:
+            projector = _Projector(reference, variants, analyses)
+            variants, analyses = projector.tables(variants, analyses)
         digests: dict[str, Any] = {
             "adapter": adapter_name(q),
             "variants_table": _table_digests(variants),
@@ -708,46 +907,51 @@ def release_answers(
             "resolved": {},
             **{kind: {} for kind in VALUES},
             **{section: {} for section in SECTIONS},
-            "unposed_range_questions": unposed_range_questions(range_questions(variants)),
-            **_narrowed(variants, len(analyses)),
+            "unposed_range_questions": unposed_range_questions(asked.ranges),
+            **({} if asked.narrowed is None else {"narrowed_range_question": asked.narrowed}),
         }
         shown: dict[str, Any] = {
-            "variants_table": _readable_variants(variants),
+            "variants_table": _readable_variants(variants, asked.probed),
             "analyses_table": readable_answer(analyses, len(analyses), key="analysis_index"),
             **{section: {} for section in SECTIONS},
         }
-        for question, answer in _walk(q, variants, path):
-            _render(q, question, answer, digests, shown if readable else None)
+        walked = _walk(q, own_variants, path, reference, projector)
+        for question, answer, own in walked:
+            _render(q, question, answer, digests, shown if readable else None, own)
     return {"digests": digests, "readable": shown} if readable else {"digests": digests}
 
 
-def _narrowed(variants: dict[int, dict[str, Any]], n_analyses: int) -> dict[str, Any]:
-    """``narrowed_range_question`` where the bound narrows the range PheWAS; nothing where
-    it does not, as on every fixture release, whose answers stay as committed (#474)."""
-    narrowed = narrowed_range_question([variants[k] for k in sorted(variants)], n_analyses)
-    return {} if narrowed is None else {"narrowed_range_question": narrowed}
-
-
 def _render(
-    q: Any, question: Question, answer: Any, digests: dict[str, Any], shown: dict[str, Any] | None
+    q: Any,
+    question: Question,
+    answer: Any,
+    digests: dict[str, Any],
+    shown: dict[str, Any] | None,
+    own: Any = None,
 ) -> None:
     """Put one answer in both renderings: its digest (and resolved rows, where the question
-    asks for them), and its readable rows unless `shown` is None."""
+    asks for them, of `own` -- the answer's rows in the release's own indices -- when it
+    was projected), and its readable rows unless `shown` is None."""
     digests[question.section][question.name] = _digested(answer)
     if isinstance(answer, Associations):
         digests[PVAL][f"{question.section}/{question.name}"] = [float(p) for p in answer[PVAL]]
     if question.resolved and not isinstance(answer, Exception):
-        digests["resolved"][question.name], values = _resolved(q, answer)
+        rows = answer if own is None else own
+        digests["resolved"][question.name], values = _resolved(q, rows)
         digests[LOG10_P][question.name] = values[LOG10_P]
         digests[PVAL][f"resolved/{question.name}"] = values[PVAL]
     if shown is not None:
         shown[question.section][question.name] = _readable(answer)
 
 
-def release_digests(path: str | Path, *, query: QueryOpener | None = None) -> dict[str, Any]:
+def release_digests(
+    path: str | Path, *, query: QueryOpener | None = None, reference: Reference | None = None
+) -> dict[str, Any]:
     """Every answer the release at `path` gives, digested; `VALUES` kept as numbers.
     The rewrite's proof (`release_answers`, without the readable rows)."""
-    digests: dict[str, Any] = release_answers(path, query=query, readable=False)["digests"]
+    digests: dict[str, Any] = release_answers(
+        path, query=query, readable=False, reference=reference
+    )["digests"]
     return digests
 
 
@@ -839,10 +1043,10 @@ def _readable(answer: Any) -> Any:
     return readable_answer(answer)
 
 
-def _readable_variants(variants: dict[int, dict[str, Any]]) -> dict[str, Any]:
-    """The Variant Table's first rows and the rows of the probed ALIDs."""
+def _readable_variants(variants: dict[int, dict[str, Any]], alids: list[str]) -> dict[str, Any]:
+    """The Variant Table's first rows and the rows of the probed ALIDs `alids` that it holds."""
     by_alid = {row["alid"]: key for key, row in variants.items()}
-    probed = {by_alid[alid]: variants[by_alid[alid]] for alid in probed_alids(variants)}
+    probed = {by_alid[alid]: variants[by_alid[alid]] for alid in alids if alid in by_alid}
     first = {key: variants[key] for key in sorted(variants)[:READABLE_ROWS]}
     return {
         "rows": len(variants),
@@ -992,6 +1196,8 @@ __all__ = [
     "readable_value",
     "refusal_questions",
     "release_answers",
+    "Reference",
+    "reference_of",
     "release_digests",
     "result_digests",
     "unposed_range_questions",
